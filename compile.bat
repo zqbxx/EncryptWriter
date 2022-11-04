@@ -1,0 +1,1 @@
+nuitka --disable-console --show-progress --standalone --follow-imports --enable-plugin=pyside6 --include-package-data=qtawesome --include-package-data=emoji_data_python --output-dir=../output writer.py
