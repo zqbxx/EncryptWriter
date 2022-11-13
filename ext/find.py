@@ -24,22 +24,22 @@ class Find(QDialog):
         self.setWindowIcon(getIcon('find'))
 
         # Button to search the document for something
-        findButton = QPushButton("Find",self)
+        findButton = QPushButton("查找",self)
         findButton.clicked.connect(self.find)
 
         # Button to replace the last finding
-        replaceButton = QPushButton("Replace",self)
+        replaceButton = QPushButton("替换",self)
         replaceButton.clicked.connect(self.replace)
 
         # Button to remove all findings
-        allButton = QPushButton("Replace all",self)
+        allButton = QPushButton("替换所有",self)
         allButton.clicked.connect(self.replaceAll)
 
         # Normal mode - radio button
-        self.normalRadio = QRadioButton("Normal",self)
+        self.normalRadio = QRadioButton("普通",self)
 
         # Regular Expression Mode - radio button
-        regexRadio = QRadioButton("RegEx",self)
+        regexRadio = QRadioButton("正则",self)
 
         # The field into which to type the query
         self.findField = QTextEdit(self)
@@ -62,7 +62,7 @@ class Find(QDialog):
         layout.addWidget(allButton,4,2,1,2)
 
         self.setGeometry(300,300,360,250)
-        self.setWindowTitle("Find and Replace")
+        self.setWindowTitle("查找和替换")
         self.setLayout(layout)
 
         # By default the normal mode is activated

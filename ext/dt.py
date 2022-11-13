@@ -1,7 +1,3 @@
-#PYQT5 PyQt4’s QtGui module has been split into PyQt5’s QtGui, QtPrintSupport and QtWidgets modules
-
-
-
 from time import strftime
 
 from PySide6.QtWidgets import QDialog, QComboBox, QPushButton, QGridLayout
@@ -49,7 +45,7 @@ class DateTime(QDialog):
         layout.addWidget(cancel,1,1)
         
         self.setGeometry(300,300,400,80)
-        self.setWindowTitle("Date and Time")
+        self.setWindowTitle("插入时间和日期")
         self.setLayout(layout)
 
     def insert(self):

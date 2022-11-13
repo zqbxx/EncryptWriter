@@ -2,9 +2,8 @@ import sys
 
 
 from PySide6 import QtWidgets, QtCore, QtGui
-from PySide6.QtCore import QSize, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QShortcut, QFont
-from PySide6.QtWidgets import QLabel
 from emoji_data_python import emoji_data
 
 from settings import getIcon

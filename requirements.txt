@@ -1,0 +1,3 @@
+PySide6
+qtawesome
+emoji_data_python

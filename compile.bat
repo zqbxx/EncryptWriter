@@ -1,1 +1,1 @@
-nuitka --disable-console --show-progress --standalone --follow-imports --enable-plugin=pyside6 --include-package-data=qtawesome --include-package-data=emoji_data_python --output-dir=../output writer.py
+nuitka --disable-console --show-progress --standalone --follow-imports --nofollow-import-to=test --enable-plugin=pyside6 --include-package-data=qtawesome --include-package-data=emoji_data_python --windows-icon-from-ico=./icons/icon.png --include-data-dir=./icons=icons writer.py

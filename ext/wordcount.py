@@ -16,21 +16,21 @@ class WordCount(QDialog):
         self.setWindowIcon(getIcon('wordCount'))
 
         # Word count in selection
-        currentLabel = QLabel("Current selection",self)
+        currentLabel = QLabel("当前选中",self)
         currentLabel.setStyleSheet("font-weight:bold; font-size: 15px;")
 
-        currentWordsLabel = QLabel("Words: ", self)
-        currentSymbolsLabel = QLabel("Symbols: ",self)
+        currentWordsLabel = QLabel("词: ", self)
+        currentSymbolsLabel = QLabel("符号: ",self)
         
         self.currentWords = QLabel(self)
         self.currentSymbols = QLabel(self)
 
         # Total word/symbol count
-        totalLabel = QLabel("Total",self)
+        totalLabel = QLabel("总计",self)
         totalLabel.setStyleSheet("font-weight:bold; font-size: 15px;")
 
-        totalWordsLabel = QLabel("Words: ", self)
-        totalSymbolsLabel = QLabel("Symbols: ",self)
+        totalWordsLabel = QLabel("词: ", self)
+        totalSymbolsLabel = QLabel("符号: ",self)
 
         self.totalWords = QLabel(self)
         self.totalSymbols = QLabel(self)
@@ -60,7 +60,7 @@ class WordCount(QDialog):
         layout.addWidget(totalSymbolsLabel,6,0)
         layout.addWidget(self.totalSymbols,6,1)
 
-        self.setWindowTitle("Word count")
+        self.setWindowTitle("文字统计")
         self.setGeometry(300,300,200,200)
         self.setLayout(layout)
 

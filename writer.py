@@ -1,26 +1,32 @@
 # -*- coding: utf-8 -*-
 import os
+from functools import partial
 
+import keymanager.encryptor
+
+import ext.table
+from ext.property import PropertyEditor
+from ext.textedit import Selection
+
+os.environ['QT_API'] = 'PySide6'
 from keymanager.dialogs import KeyMgrDialog
 from keymanager.encryptor import encrypt_data, decrypt_data
 from keymanager.key import KEY_CHECKER as key_checker, start_check_key_thread, KEY_CACHE as key_cache, \
-    add_key_invalidate_callback, add_current_keystatus
+    add_key_invalidate_callback, add_current_keystatus_callback
 
 from settings import getIcon
 
-os.environ['QT_API'] = 'PySide6'
-import qtawesome as qta
 import sys
 from pathlib import Path
 
 from PySide6 import QtPrintSupport, QtCore
 from PySide6.QtCore import QPoint
 from PySide6.QtGui import QAction, QIcon, QContextMenuEvent, Qt, QImage, QTextCharFormat, QFont, QTextCursor, \
-    QTextListFormat, QTextDocument, QTextImageFormat, QTextFrameFormat, QTextBlockFormat, QTextBlock, QBrush, QColor
-from PySide6.QtWidgets import QMainWindow, QFontComboBox, QSpinBox, QMessageBox, QMenu, QTextEdit, QFileDialog, QDialog, \
-    QColorDialog, QApplication, QPushButton
+    QTextListFormat, QColor
+from PySide6.QtWidgets import QMainWindow, QFontComboBox, QSpinBox, QMessageBox, QMenu, QFileDialog, QDialog, \
+    QColorDialog, QApplication, QPushButton, QComboBox, QCommandLinkButton, QToolButton
 
-from ext import datetime, table, wordcount, image, emo, textedit
+from ext import dt, wordcount, image, emo, textedit, quote, table
 from ext.find import Find
 
 
@@ -34,100 +40,105 @@ class Main(QMainWindow):
         self.changesSaved = True
 
         self.emoji_browser: emo.IconBrowser = None
-        self.tablePropertyEditor: table.Table = None
 
         self.initUI()
 
 
     def initToolbar(self):
 
-        self.newAction = QAction(getIcon('new'), "New", self)
+        self.newAction = QAction(getIcon('new'), "新建", self)
         self.newAction.setShortcut("Ctrl+N")
-        self.newAction.setStatusTip("Create a new document from scratch.")
+        self.newAction.setStatusTip("创建一个新的文档")
         self.newAction.triggered.connect(self.new)
 
-        self.openAction = QAction(getIcon('open'), "Open file", self)
-        self.openAction.setStatusTip("Open existing document")
+        self.openAction = QAction(getIcon('open'), "打开", self)
+        self.openAction.setStatusTip("打开一个已经存在的文档")
         self.openAction.setShortcut("Ctrl+O")
         self.openAction.triggered.connect(self.open)
 
-        self.saveAction = QAction(getIcon('save'), "Save", self)
-        self.saveAction.setStatusTip("Save document")
+        self.saveAction = QAction(getIcon('save'), "保存", self)
+        self.saveAction.setStatusTip("保存文档")
         self.saveAction.setShortcut("Ctrl+S")
         self.saveAction.triggered.connect(self.save)
 
-        self.printAction = QAction(getIcon('print'), "Print document", self)
-        self.printAction.setStatusTip("Print document")
+        self.printAction = QAction(getIcon('print'), "打印", self)
+        self.printAction.setStatusTip("打印文档")
         self.printAction.setShortcut("Ctrl+P")
         self.printAction.triggered.connect(self.printHandler)
 
-        self.previewAction = QAction(getIcon('preview'), "Page view", self)
-        self.previewAction.setStatusTip("Preview page before printing")
+        self.previewAction = QAction(getIcon('preview'), "预览", self)
+        self.previewAction.setStatusTip("在打印前预览文档")
         self.previewAction.setShortcut("Ctrl+Shift+P")
         self.previewAction.triggered.connect(self.preview)
+
+        self.propertyAction = QAction(getIcon('property'), '文档属性', self)
+        self.propertyAction.triggered.connect(self.editProperty)
 
         self.keyMgrAction = QAction(getIcon('keyMgr'), '密钥管理', self)
         self.keyMgrAction.setStatusTip("创建、添加删除密钥")
         self.keyMgrAction.setShortcut("Ctrl+Shift+K")
         self.keyMgrAction.triggered.connect(self.keyManager)
 
-        self.findAction = QAction(getIcon('find'), "Find and replace", self)
-        self.findAction.setStatusTip("Find and replace words in your document")
+        self.findAction = QAction(getIcon('find'), "查找和替换", self)
+        self.findAction.setStatusTip("在文档中查找和替换单词、词组")
         self.findAction.setShortcut("Ctrl+F")
         self.findAction.triggered.connect(Find(self).show)
 
-        self.cutAction = QAction(getIcon('cut'), "Cut to clipboard", self)
-        self.cutAction.setStatusTip("Delete and copy text to clipboard")
+        self.cutAction = QAction(getIcon('cut'), "剪切", self)
+        self.cutAction.setStatusTip("将文档内容复制到剪贴板，然后在文档中删除")
         self.cutAction.setShortcut("Ctrl+X")
         self.cutAction.triggered.connect(self.text.cut)
 
-        self.copyAction = QAction(getIcon('copy'), "Copy to clipboard", self)
-        self.copyAction.setStatusTip("Copy text to clipboard")
+        self.copyAction = QAction(getIcon('copy'), "复制", self)
+        self.copyAction.setStatusTip("复制文档内容到剪贴板")
         self.copyAction.setShortcut("Ctrl+C")
         self.copyAction.triggered.connect(self.text.copy)
 
-        self.pasteAction = QAction(getIcon('paste'), "Paste from clipboard", self)
-        self.pasteAction.setStatusTip("Paste text from clipboard")
+        self.pasteAction = QAction(getIcon('paste'), "粘贴", self)
+        self.pasteAction.setStatusTip("从剪贴板中复制内容到文档中")
         self.pasteAction.setShortcut("Ctrl+V")
         self.pasteAction.triggered.connect(self.text.paste)
 
-        self.undoAction = QAction(getIcon('undo'), "Undo last action", self)
-        self.undoAction.setStatusTip("Undo last action")
+        self.undoAction = QAction(getIcon('undo'), "撤销", self)
+        self.undoAction.setStatusTip("撤回上一次的操作")
         self.undoAction.setShortcut("Ctrl+Z")
         self.undoAction.triggered.connect(self.text.undo)
 
-        self.redoAction = QAction(getIcon('redo'), "Redo last undone thing", self)
-        self.redoAction.setStatusTip("Redo last undone thing")
+        self.clearRedoUndoAction = QAction(getIcon('clearUndoRedo'), "清除撤销、重做历史", self)
+        self.clearRedoUndoAction.triggered.connect(lambda : self.text.document().clearUndoRedoStacks())
+
+        self.redoAction = QAction(getIcon('redo'), "重做", self)
+        self.redoAction.setStatusTip("重做上次撤销的操作")
         self.redoAction.setShortcut("Ctrl+Y")
         self.redoAction.triggered.connect(self.text.redo)
 
-        dateTimeAction = QAction(getIcon('dateTime'), "Insert current date/time", self)
-        dateTimeAction.setStatusTip("Insert current date/time")
+        dateTimeAction = QAction(getIcon('dateTime'), "插入时间和日期", self)
+        dateTimeAction.setStatusTip("插入时间和日期")
         dateTimeAction.setShortcut("Ctrl+D")
-        dateTimeAction.triggered.connect(datetime.DateTime(self).show)
+        dateTimeAction.triggered.connect(dt.DateTime(self).show)
 
-        wordCountAction = QAction(getIcon('wordCount'), "See word/symbol count", self)
-        wordCountAction.setStatusTip("See word/symbol count")
+        wordCountAction = QAction(getIcon('wordCount'), "文字统计", self)
+        wordCountAction.setStatusTip("查看文字和符号数量")
         wordCountAction.setShortcut("Ctrl+W")
         wordCountAction.triggered.connect(self.wordCount)
 
-        tableAction = QAction(getIcon('table'), "Insert table", self)
-        tableAction.setStatusTip("Insert table")
+        tableAction = QAction(getIcon('table'), "插入表格", self)
+        tableAction.setStatusTip("插入表格")
         tableAction.setShortcut("Ctrl+T")
-        tableAction.triggered.connect(self.tablePropertyEditor.show)
+        tableAction.triggered.connect(self.insertTable)
 
-        imageAction = QAction(getIcon('image'), "Insert image", self)
-        imageAction.setStatusTip("Insert image")
+        imageAction = QAction(getIcon('image'), "插入图片", self)
+        imageAction.setStatusTip("插入图片")
         imageAction.setShortcut("Ctrl+Shift+I")
         imageAction.triggered.connect(self.insertImage)
 
-        bulletAction = QAction(getIcon('bullet'), "Insert bullet List", self)
-        bulletAction.setStatusTip("Insert bullet list")
+        bulletAction = QAction(getIcon('bullet'), "插入符号列表", self)
+        bulletAction.setStatusTip("插入符号列表")
         bulletAction.setShortcut("Ctrl+Shift+B")
         bulletAction.triggered.connect(self.bulletList)
 
-        numberedAction = QAction(getIcon('numbered'), "Insert numbered List", self)
-        numberedAction.setStatusTip("Insert numbered list")
+        numberedAction = QAction(getIcon('numbered'), "插入数字列表", self)
+        numberedAction.setStatusTip("插入数字列表")
         numberedAction.setShortcut("Ctrl+Shift+L")
         numberedAction.triggered.connect(self.numberList)
 
@@ -138,7 +149,7 @@ class Main(QMainWindow):
         emojiAction.triggered.connect(self.openEmoji)
 
         quoteAction = QAction(getIcon('quote'), "插入引用", self)
-        quoteAction.triggered.connect(self.quote)
+        quoteAction.triggered.connect(self.insertQuote)
 
         self.toolbar = self.addToolBar("Options")
 
@@ -150,6 +161,7 @@ class Main(QMainWindow):
 
         self.toolbar.addAction(self.printAction)
         self.toolbar.addAction(self.previewAction)
+        self.toolbar.addAction(self.propertyAction)
 
         self.toolbar.addSeparator()
 
@@ -158,24 +170,26 @@ class Main(QMainWindow):
         self.toolbar.addAction(self.pasteAction)
         self.toolbar.addAction(self.undoAction)
         self.toolbar.addAction(self.redoAction)
+        self.toolbar.addAction(self.clearRedoUndoAction)
+        self.toolbar.addAction(self.findAction)
+        self.toolbar.addAction(wordCountAction)
 
         self.toolbar.addSeparator()
 
-        self.toolbar.addAction(self.findAction)
         self.toolbar.addAction(dateTimeAction)
-        self.toolbar.addAction(wordCountAction)
         self.toolbar.addAction(tableAction)
         self.toolbar.addAction(imageAction)
+        self.toolbar.addAction(bulletAction)
+        self.toolbar.addAction(numberedAction)
+        self.toolbar.addAction(emojiAction)
+        self.toolbar.addAction(quoteAction)
 
         self.toolbar.addSeparator()
 
-        self.toolbar.addAction(bulletAction)
-        self.toolbar.addAction(numberedAction)
+        self.toolbar.addAction(sourceCode)
 
         self.addToolBarBreak()
-        self.toolbar.addAction(emojiAction)
-        self.toolbar.addAction(quoteAction)
-        self.toolbar.addAction(sourceCode)
+
 
     def initFormatbar(self):
 
@@ -192,52 +206,95 @@ class Main(QMainWindow):
         fontSize.setValue(14)
 
         defaultFont = fontBox.currentFont()
-        defaultFont.setPointSize(14)
-        self.text.document().setDefaultFont(defaultFont)
+        self.initDocumentDefaultSettings(defaultFont)
 
-        fontColor = QAction(getIcon('fontColor'),"Change font color",self)
+        fontColor = QAction(getIcon('fontColor'),"修改文字颜色",self)
         fontColor.triggered.connect(self.fontColorChanged)
 
-        boldAction = QAction(getIcon('bold'),"Bold",self)
+        boldAction = QAction(getIcon('bold'),"粗体",self)
         boldAction.triggered.connect(self.bold)
 
-        italicAction = QAction(getIcon('italic'),"Italic",self)
+        italicAction = QAction(getIcon('italic'),"斜体",self)
         italicAction.triggered.connect(self.italic)
 
-        underlAction = QAction(getIcon('underl'),"Underline",self)
+        underlAction = QAction(getIcon('underl'),"下划线",self)
         underlAction.triggered.connect(self.underline)
 
-        strikeAction = QAction(getIcon('strike'),"Strike-out",self)
+        strikeAction = QAction(getIcon('strike'),"删除线",self)
         strikeAction.triggered.connect(self.strike)
 
-        superAction = QAction(getIcon('super'),"Superscript",self)
+        superAction = QAction(getIcon('super'),"上标",self)
         superAction.triggered.connect(self.superScript)
 
-        subAction = QAction(getIcon('sub'), "Subscript",self)
+        subAction = QAction(getIcon('sub'), "下标",self)
         subAction.triggered.connect(self.subScript)
 
-        alignLeft = QAction(getIcon('alignLeft'),"Align left",self)
+        alignLeft = QAction(getIcon('alignLeft'),"左对齐",self)
         alignLeft.triggered.connect(self.alignLeft)
 
-        alignCenter = QAction(getIcon('alignCenter'),"Align center",self)
+        alignCenter = QAction(getIcon('alignCenter'),"居中",self)
         alignCenter.triggered.connect(self.alignCenter)
 
-        alignRight = QAction(getIcon('alignRight'),"Align right",self)
+        alignRight = QAction(getIcon('alignRight'),"右对齐",self)
         alignRight.triggered.connect(self.alignRight)
 
-        alignJustify = QAction(getIcon('alignJustify'),"Align justify",self)
+        alignJustify = QAction(getIcon('alignJustify'),"两端对齐",self)
         alignJustify.triggered.connect(self.alignJustify)
 
-        indentAction = QAction(getIcon('indent'),"Indent Area",self)
+        indentAction = QAction(getIcon('indent'),"增加缩进",self)
         indentAction.setShortcut("Ctrl+Tab")
         indentAction.triggered.connect(self.indent)
 
-        dedentAction = QAction(getIcon('dedent'),"Dedent Area",self)
+        dedentAction = QAction(getIcon('dedent'),"减少缩进",self)
         dedentAction.setShortcut("Shift+Tab")
         dedentAction.triggered.connect(self.dedent)
 
-        backColor = QAction(getIcon('backColor'),"Change background color",self)
-        backColor.triggered.connect(self.highlight)
+        backColor = QAction(getIcon('backColor'),"修改背景色",self)
+        backColor.triggered.connect(self.backColor)
+
+        headButton = QToolButton(self)
+
+        h1Action = QAction(getIcon('h1'), '一级标题', self)
+        h2Action = QAction(getIcon('h2'), '二级标题', self)
+        h3Action = QAction(getIcon('h3'), '三级标题', self)
+        h4Action = QAction(getIcon('h4'), '四级标题', self)
+
+        h1Action.setProperty('level', 1)
+        h2Action.setProperty('level', 2)
+        h3Action.setProperty('level', 3)
+        h4Action.setProperty('level', 4)
+
+        h1Action.triggered.connect(partial(self.head, headButton=headButton, action=h1Action))
+        h2Action.triggered.connect(partial(self.head, headButton=headButton, action=h2Action))
+        h3Action.triggered.connect(partial(self.head, headButton=headButton, action=h3Action))
+        h4Action.triggered.connect(partial(self.head, headButton=headButton, action=h4Action))
+
+        headMenu = QMenu(headButton)
+        headMenu.addAction(h1Action)
+        headMenu.addAction(h2Action)
+        headMenu.addAction(h3Action)
+        headMenu.addAction(h4Action)
+
+        headButton.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        headButton.setDefaultAction(h1Action)
+        headButton.setMenu(headMenu)
+
+        highlightButton = QToolButton(self)
+        highlightButton.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        highlightAction = QAction(getIcon('highlight1'), '高亮,，加粗', self)
+        highlightAction.triggered.connect(partial(self.highlight, toolButton=highlightButton, action=highlightAction))
+        highlightUnderlineAction = QAction(getIcon('highlight2'), '高亮，加粗，下划线', self)
+        highlightUnderlineAction.triggered.connect(partial(self.highlightUnderline, toolButton=highlightButton, action=highlightUnderlineAction))
+
+        highlightMenu = QMenu(highlightButton)
+        highlightMenu.addAction(highlightAction)
+        highlightMenu.addAction(highlightUnderlineAction)
+
+        highlightButton.setDefaultAction(highlightAction)
+        highlightButton.setMenu(highlightMenu)
+
+        clearAction = QAction(getIcon('clear'), '清除格式', self)
+        clearAction.triggered.connect(self.clearFormat)
 
         self.formatbar = self.addToolBar("Format")
 
@@ -270,13 +327,22 @@ class Main(QMainWindow):
         self.formatbar.addAction(indentAction)
         self.formatbar.addAction(dedentAction)
 
+        self.formatbar.addWidget(headButton)
+        self.formatbar.addWidget(highlightButton)
+
+        self.formatbar.addAction(clearAction)
+
+    def initDocumentDefaultSettings(self, defaultFont):
+        defaultFont.setPointSize(14)
+        self.text.document().setDefaultFont(defaultFont)
+
     def initMenubar(self):
 
         menubar = self.menuBar()
 
-        file = menubar.addMenu("File")
-        edit = menubar.addMenu("Edit")
-        view = menubar.addMenu("View")
+        file = menubar.addMenu("文件")
+        edit = menubar.addMenu("编辑")
+        view = menubar.addMenu("视图")
 
         # Add the most important actions to the menubar
 
@@ -295,13 +361,13 @@ class Main(QMainWindow):
         edit.addAction(self.findAction)
 
         # Toggling actions for the various bars
-        toolbarAction = QAction("Toggle Toolbar",self)
+        toolbarAction = QAction("显示/隐藏 工具栏",self)
         toolbarAction.triggered.connect(self.toggleToolbar)
 
-        formatbarAction = QAction("Toggle Formatbar",self)
+        formatbarAction = QAction("显示/隐藏 格式栏",self)
         formatbarAction.triggered.connect(self.toggleFormatbar)
 
-        statusbarAction = QAction("Toggle Statusbar",self)
+        statusbarAction = QAction("显示/隐藏 状态栏",self)
         statusbarAction.triggered.connect(self.toggleStatusbar)
 
         view.addAction(toolbarAction)
@@ -311,7 +377,6 @@ class Main(QMainWindow):
     def initUI(self):
 
         self.text = textedit.TextEdit(self)
-        self.rootFrame = self.text.textCursor().currentFrame()
         self.text.document().setDocumentMargin(20)
         self.text.document().contentsChanged.connect(lambda: key_cache.get_cur_key().key if key_cache.get_cur_key() is not None and not key_cache.get_cur_key().timeout else None)
 
@@ -319,7 +384,7 @@ class Main(QMainWindow):
         # more or less 8 spaces
         self.text.setTabStopDistance(33)
 
-        self.tablePropertyEditor = table.Table(self.text)
+        self.tablePropertyEditor = table.TableEditor(self.text)
 
         self.initToolbar()
         self.initFormatbar()
@@ -348,13 +413,26 @@ class Main(QMainWindow):
     def initStatusBar(self):
         btn = QPushButton('', self)
         btn.setFlat(True)
-        unlock = qta.icon('ei.unlock', options=[{'color': '#006600'}])
-        lock = qta.icon('ei.lock', options=[{'color': '#660033'}])
-        add_current_keystatus(lambda key: btn.setIcon(unlock if key is not None and not key.timeout else lock))
+        unlock = getIcon('unlock')
+        lock = getIcon('lock')
+        add_current_keystatus_callback(lambda key: btn.setIcon(unlock if key is not None and not key.timeout else lock))
         self.statusbar.addPermanentWidget(btn)
 
-    def changed(self):
-        self.changesSaved = False
+    def changed(self, changesSaved=False):
+        self.changesSaved = changesSaved
+        self.updateWindowsTitle()
+
+    def updateWindowsTitle(self):
+        if self.changesSaved:
+            if not self.filename:
+                self.setWindowTitle('Writer')
+            else:
+                self.setWindowTitle('Writer ' + self.filename )
+        else:
+            if not self.filename:
+                self.setWindowTitle('Writer - [未保存]')
+            else:
+                self.setWindowTitle('Writer ' + self.filename + ' [未保存]')
 
     def closeEvent(self,event):
 
@@ -390,15 +468,51 @@ class Main(QMainWindow):
             else:
                 event.ignore()
 
-    def context(self,pos):
+    def context(self,pos: QPoint):
+
+        textCursor = self.text.textCursor()
+        mouseCursor = self.text.cursorForPosition(pos)
+        mouseCursorPos = mouseCursor.position()
+
+        # 将光标调整到鼠标位置
+        if not textCursor.selectionStart() <=mouseCursorPos <= textCursor.selectionEnd():
+            self.text.setTextCursor(mouseCursor)
+            textCursor = self.text.textCursor()
+
+        # 调整光标位置，否则无法判断图片
+        if textCursor.charFormat().isImageFormat(): # 当前光标是图片格式的情况，一般来说此时光标在图片后
+            # 当前选中一个字符（图片），调整鼠标位置到选中开始
+            if textCursor.hasSelection():
+                if textCursor.selectionStart() == textCursor.position() \
+                        and abs(textCursor.selectionStart() - textCursor.selectionEnd()) == 1:
+                    s = self.text.getSelection()
+                    textCursor.clearSelection()
+                    self.text.setSelection(s)
+            else:
+                # 没有选中则选中一个字符位置（图片）
+                if textCursor.position() == 0:
+                    self.text.setSelection(Selection(0, 1))
+                else:
+                    s = Selection(textCursor.position() - 1, textCursor.position())
+                    self.text.setSelection(s)
+        elif not textCursor.hasSelection():# 当前光标不是图片格式且不在选中状态
+            # 向后移动一个查看格式
+            textCursor.setPosition(textCursor.position() + 1, QTextCursor.MoveMode.MoveAnchor)
+            if textCursor.charFormat().isImageFormat():
+                s = Selection(textCursor.position() - 1, textCursor.position())
+                self.text.setSelection(s)
+            else:
+                textCursor.setPosition(textCursor.position() - 1, QTextCursor.MoveMode.MoveAnchor)
 
         charFormat = self.text.currentCharFormat()
-        if charFormat.isImageFormat():
+
+        if charFormat.isImageFormat() and abs(textCursor.selectionStart() - textCursor.selectionEnd()) <= 1:
+            cursor = self.text.cursorForPosition(pos)
             menu = QMenu(self)
             image_format = charFormat.toImageFormat()
             def showImageSetting():
                 imageSetting = image.Image(image_format, self)
-                imageSetting.okClicked.connect(lambda f:self.text.setCurrentCharFormat(f))
+                imageSetting.okClicked.connect(lambda f: self.text.setCurrentCharFormat(f))
                 imageSetting.exec()
                 imageSetting.destroy()
 
@@ -411,41 +525,31 @@ class Main(QMainWindow):
                     if not selectedImage.save(filename, 'png'):
                         QMessageBox.warning(self, '保存图片失败', '保存图片失败')
 
-
-            imageSettingAction = QAction(qta.icon('mdi.resize'), "调整图片大小", self)
+            imageSettingAction = QAction(getIcon('imageSetting'), "调整图片大小", self)
             imageSettingAction.triggered.connect(showImageSetting)
             menu.addAction(imageSettingAction)
 
-            imageExportAction = QAction(qta.icon('msc.save-as'), "图片另存为", self)
+            imageExportAction = QAction(getIcon('imageExport'), "图片另存为", self)
             imageExportAction.triggered.connect(imageSaveAs)
             menu.addAction(imageExportAction)
 
-            pos = self.mapToGlobal(pos)
+            self.showMenu(menu, pos)
 
-            # Add pixels for the tool and formatbars, which are not included
-            # in mapToGlobal(), but only if the two are currently visible and
-            # not toggled by the user
-
-            if self.toolbar.isVisible():
-                pos.setY(pos.y() + 45)
-
-            if self.formatbar.isVisible():
-                pos.setY(pos.y() + 45)
-            menu.move(pos)
-            menu.exec()
-
-            # image_format = charFormat.toImageFormat()
-            # image_format.setWidth(image_format.width()*0.9)
-            # image_format.setHeight(image_format.width()*0.9)
-            # self.text.setCurrentCharFormat(image_format)
             return
 
         # Grab the cursor
         cursor = self.text.textCursor()
 
         currentFrame = cursor.currentFrame()
-        if currentFrame != self.text.document().rootFrame():
-            print('child frame')
+        if currentFrame != self.text.document().rootFrame() and not cursor.currentTable():
+            menu = self.text.createStandardContextMenu()
+            menu.addSeparator()
+            modQuotePropAction = QAction('修改引用格式', self)
+            modQuotePropAction.triggered.connect(self.modifyQuotePropery)
+            menu.addAction(modQuotePropAction)
+            self.showMenu(menu, pos)
+            return
+
 
         # Grab the current table, if there is one
         table = cursor.currentTable()
@@ -457,36 +561,33 @@ class Main(QMainWindow):
 
             menu = QMenu(self)
 
-            appendRowAction = QAction("Append row",self)
+            appendRowAction = QAction(getIcon('tabAppendRow'), "追加行",self)
             appendRowAction.triggered.connect(lambda: table.appendRows(1))
 
-            appendColAction = QAction("Append column",self)
+            appendColAction = QAction(getIcon('tabAppendColumn'), "追加列",self)
             appendColAction.triggered.connect(lambda: table.appendColumns(1))
 
-
-            removeRowAction = QAction("Remove row",self)
+            removeRowAction = QAction(getIcon('tabRemoveRow'), "删除行",self)
             removeRowAction.triggered.connect(self.removeRow)
 
-            removeColAction = QAction("Remove column",self)
+            removeColAction = QAction(getIcon('tabRemoveColumn'), "删除列",self)
             removeColAction.triggered.connect(self.removeCol)
 
 
-            insertRowAction = QAction("Insert row",self)
+            insertRowAction = QAction(getIcon('tabInsertRow'), "插入行",self)
             insertRowAction.triggered.connect(self.insertRow)
 
-            insertColAction = QAction("Insert column",self)
+            insertColAction = QAction(getIcon('tabInserColumn'), "插入列",self)
             insertColAction.triggered.connect(self.insertCol)
 
-
-            mergeAction = QAction("Merge cells",self)
+            mergeAction = QAction(getIcon('tabMergeCells'), "合并单元格",self)
             mergeAction.triggered.connect(lambda: table.mergeCells(cursor))
 
             # Only allow merging if there is a selection
             if not cursor.hasSelection():
                 mergeAction.setEnabled(False)
 
-
-            splitAction = QAction("Split cells",self)
+            splitAction = QAction(getIcon("tabSplitCells"), "拆分单元格",self)
 
             cell = table.cellAt(cursor)
 
@@ -499,7 +600,13 @@ class Main(QMainWindow):
             else:
                 splitAction.setEnabled(False)
 
-            propertyAction = QAction("修改表格格式", self)
+            cellBackgroundAction = QAction(getIcon('tabCellBackground'), '修改单元格背景色', self)
+            cellBackgroundAction.triggered.connect(self.modifyCellBackground)
+
+            columnAction = QAction(getIcon('tabColWidth'), "修改列宽", self)
+            columnAction.triggered.connect(self.modifyColumnPropery)
+
+            propertyAction = QAction(getIcon('table'), "修改表格格式", self)
             propertyAction.triggered.connect(self.modifyTableProperty)
 
             menu.addAction(appendRowAction)
@@ -522,31 +629,36 @@ class Main(QMainWindow):
 
             menu.addSeparator()
 
+            menu.addAction(cellBackgroundAction)
+            menu.addAction(columnAction)
             menu.addAction(propertyAction)
 
-            # Convert the widget coordinates into global coordinates
-            pos = self.mapToGlobal(pos)
-
-            # Add pixels for the tool and formatbars, which are not included
-            # in mapToGlobal(), but only if the two are currently visible and
-            # not toggled by the user
-
-            if self.toolbar.isVisible():
-                pos.setY(pos.y() + 45)
-
-            if self.formatbar.isVisible():
-                pos.setY(pos.y() + 45)
-                
-            # Move the menu to the new position
-            menu.move(pos)
-
-            menu.show()
+            self.showMenu(menu, pos)
 
         else:
 
             event = QContextMenuEvent(QContextMenuEvent.Mouse,QPoint())
 
             self.text.contextMenuEvent(event)
+
+    def showMenu(self, menu:QMenu, pos):
+        # Convert the widget coordinates into global coordinates
+        pos = self.mapToGlobal(pos)
+
+        # Add pixels for the tool and formatbars, which are not included
+        # in mapToGlobal(), but only if the two are currently visible and
+        # not toggled by the user
+
+        if self.toolbar.isVisible():
+            pos.setY(pos.y() + 45)
+
+        if self.formatbar.isVisible():
+            pos.setY(pos.y() + 45)
+
+        # Move the menu to the new position
+        menu.move(pos)
+
+        menu.show()
 
     def removeRow(self):
 
@@ -638,36 +750,59 @@ class Main(QMainWindow):
 
     def open(self):
 
+        if not self.changesSaved:
+            result = QMessageBox.question(self, '文件未保存', '文件未保存，是否继续打开文件？', QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if result == QMessageBox.StandardButton.No:
+                return
+
+        self.filename = QFileDialog.getOpenFileName(self, 'Open File', ".", "(*.writer)")[0]
+        content = Path(self.filename).read_bytes()
+        self.text.encryptDocument = keymanager.encryptor.is_encrypt_data(content)
+
         current_key = key_cache.get_cur_key()
 
-        if current_key is None:
-            QMessageBox.critical(self, '密钥错误', '没有激活的密钥')
-            return
+        if self.text.encryptDocument:
 
-        if current_key.timeout:
-            QMessageBox.critical(self, '密钥错误', '密钥超时')
-            return
+            if current_key is None:
+                QMessageBox.critical(self, '密钥错误', '没有激活的密钥')
+                self.filename = ''
+                return
+
+            if current_key.timeout:
+                QMessageBox.critical(self, '密钥错误', '密钥超时')
+                self.filename = ''
+                return
 
         # Get filename and show only .writer files
         #PYQT5 Returns a tuple in PyQt5, we only need the filename
-        self.filename = QFileDialog.getOpenFileName(self, 'Open File',".","(*.writer)")[0]
+
 
         if self.filename:
-            encrypt_content = Path(self.filename).read_bytes()
-            content = decrypt_data(current_key.key, encrypt_content)
-            self.text.setText(content.decode('utf-8'))
+            if self.text.encryptDocument:
+                encrypt_content = Path(self.filename).read_bytes()
+                content = decrypt_data(current_key.key, encrypt_content)
+            else:
+                content = Path(self.filename).read_bytes()
+            html, prop = self.text.docfromBytes(content)
+            self.text.documentProperty = self.text.dictToDocumentProperty(prop, self.text.documentProperty)
+            self.text.textChanged.disconnect(self.changed)
+            self.changed(changesSaved=True)
+            self.text.setText(html)
+            self.text.textChanged.connect(self.changed)
 
     def save(self):
 
         current_key = key_cache.get_cur_key()
 
-        if current_key is None:
-            QMessageBox.critical(self, '密钥错误', '没有激活的密钥')
-            return False
+        if self.text.encryptDocument:
 
-        if current_key.timeout:
-            QMessageBox.critical(self, '密钥错误', '密钥超时')
-            return False
+            if current_key is None:
+                QMessageBox.critical(self, '密钥错误', '没有激活的密钥')
+                return False
+
+            if current_key.timeout:
+                QMessageBox.critical(self, '密钥错误', '密钥超时')
+                return False
 
         # Only open dialog if there is no filename yet
         #PYQT5 Returns a tuple in PyQt5, we only need the filename
@@ -680,12 +815,17 @@ class Main(QMainWindow):
             if not self.filename.endswith(".writer"):
               self.filename += ".writer"
 
-            content = self.text.toHtml().encode('utf-8')
-            key_data = current_key.key
-            encrypt_content = encrypt_data(key_data, content)
-            Path(self.filename).write_bytes(encrypt_content)
+            self.text.updateEditTime()
+            prop = self.text.documentPropertyToDict(self.text.documentProperty)
+            content = self.text.docToBytes(self.text.toHtml(), prop)
+            if self.text.encryptDocument:
+                encrypt_content = encrypt_data(current_key.key, content)
+                Path(self.filename).write_bytes(encrypt_content)
+            else:
+                Path(self.filename).write_bytes(content)
 
             self.changesSaved = True
+            self.updateWindowsTitle()
             return True
         return False
 
@@ -698,6 +838,12 @@ class Main(QMainWindow):
         preview.paintRequested.connect(lambda p: self.text.print_(p))
 
         preview.exec_()
+
+    def editProperty(self):
+        prop = PropertyEditor(self.text)
+        prop.propertySaved.connect(lambda : self.changed())
+        prop.exec()
+        prop.destroy()
 
     def keyManager(self):
         kmd = KeyMgrDialog()
@@ -720,7 +866,16 @@ class Main(QMainWindow):
         line = cursor.blockNumber() + 1
         col = cursor.columnNumber()
 
-        self.statusbar.showMessage("Line: {} | Column: {}".format(line,col))
+        message = "Line: {} | Column: {}".format(line,col)
+        if cursor.hasSelection():
+            font = self.text.currentFont()
+            family = font.family()
+            size = font.pointSize()
+            bold = font.bold()
+            italic = font.italic()
+            message += " | 字体：{} 字号：{} ".format(family, size) + (' 加粗' if bold else '') + (' 斜体' if italic else '')
+
+        self.statusbar.showMessage(message)
 
     def wordCount(self):
 
@@ -734,7 +889,7 @@ class Main(QMainWindow):
 
         # Get image file name
         #PYQT5 Returns a tuple in PyQt5
-        filename = QFileDialog.getOpenFileName(self, 'Insert image',".","Images (*.png *.xpm *.jpg *.bmp *.gif)")[0]
+        filename = QFileDialog.getOpenFileName(self, 'Insert image',".","Images (*.png *.xpm *.jpg *.bmp *.gif *.svg)")[0]
 
         if filename:
             
@@ -764,25 +919,40 @@ class Main(QMainWindow):
         # Set it as the new text color
         self.text.setTextColor(color)
 
-    def highlight(self):
+    def backColor(self):
 
         color = QColorDialog.getColor()
 
         self.text.setTextBackgroundColor(color)
 
+    def insertTable(self):
+        dialog = table.TableEditor(self.text)
+        dialog.exec_()
+        dialog.destroy()
+
     def modifyTableProperty(self):
-        self.tablePropertyEditor.setCurrentFormat(self.text.textCursor().currentTable().format())
-        self.tablePropertyEditor.updateValue()
-        self.tablePropertyEditor.show()
+        dialog = table.TableEditor(self.text)
+        dialog.setCurrentFormat(self.text.textCursor().currentTable().format())
+        dialog.updateValue()
+        dialog.exec_()
+        dialog.destroy()
+
+    def modifyColumnPropery(self):
+        dialog = table.ColumnEditor(self.text)
+        dialog.exec_()
+        dialog.destroy()
+
+    def modifyCellBackground(self):
+        ext.table.setCellsBackgroundColor(self.text)
 
     def copySourceCode(self):
         #self.text.insertHtml('<h1>标题一</h1>')
-        self.text.textCursor().beginEditBlock()
-        text = self.text.textCursor().selectedText()
-        self.text.textCursor().insertHtml('<h1>' + text + '</h1>')
-        self.text.textCursor().endEditBlock()
-        self.text.textCursor().insertHtml('<code>var i = "1"</code>')
-        self.text.textCursor().insertHtml('<cite>fffffffffffffffffffffffffffff</cite>')
+        # self.text.textCursor().beginEditBlock()
+        # text = self.text.textCursor().selectedText()
+        # self.text.textCursor().insertHtml('<h1>' + text + '</h1>')
+        # self.text.textCursor().endEditBlock()
+        # self.text.textCursor().insertHtml('<code>var i = "1"</code>')
+        # self.text.textCursor().insertHtml('<cite>fffffffffffffffffffffffffffff</cite>')
         # textList = self.text.textCursor().currentList()
         # textListCnt = textList.count()
         # for i in range(textListCnt):
@@ -805,22 +975,21 @@ class Main(QMainWindow):
 
         self.emoji_browser.show()
 
-    def quote(self):
-        frameFormat = QTextFrameFormat()
-        frameFormat.setBorder(1)
-        frameFormat.setBackground(QColor(255, 255, 240))
-        frameFormat.setBorderBrush(Qt.BrushStyle.SolidPattern)
-        frameFormat.setLeftMargin(20)
-        frameFormat.setRightMargin(20)
-        frameFormat.setTopMargin(20)
-        frameFormat.setBottomMargin(20)
-        frameFormat.setPadding(20)
-        self.text.textCursor().insertFrame(frameFormat)
+    def insertQuote(self):
+        dialog = quote.Quote(self.text)
+        dialog.exec_()
+        dialog.destroy()
+
+    def modifyQuotePropery(self):
+        dialog = quote.Quote(self.text)
+        dialog.setCurrentFormat(self.text.textCursor().currentFrame().format().toFrameFormat())
+        dialog.updateValue()
+        dialog.exec_()
+        dialog.destroy()
 
     def font(self, font:QFont):
         currentFont = self.text.currentFont()
         currentFont.setFamily(font.family())
-        currentFont.setStyleName()
         self.text.setCurrentFont(currentFont)
 
     def bold(self):
@@ -865,13 +1034,13 @@ class Main(QMainWindow):
         align = fmt.verticalAlignment()
 
         # Toggle the state
-        if align == QTextCharFormat.AlignNormal:
+        if align == QTextCharFormat.VerticalAlignment.AlignNormal:
 
-            fmt.setVerticalAlignment(QTextCharFormat.AlignSuperScript)
+            fmt.setVerticalAlignment(QTextCharFormat.VerticalAlignment.AlignSuperScript)
 
         else:
 
-            fmt.setVerticalAlignment(QTextCharFormat.AlignNormal)
+            fmt.setVerticalAlignment(QTextCharFormat.VerticalAlignment.AlignNormal)
 
         # Set the new format
         self.text.setCurrentCharFormat(fmt)
@@ -885,13 +1054,13 @@ class Main(QMainWindow):
         align = fmt.verticalAlignment()
 
         # Toggle the state
-        if align == QTextCharFormat.AlignNormal:
+        if align == QTextCharFormat.VerticalAlignment.AlignNormal:
 
-            fmt.setVerticalAlignment(QTextCharFormat.AlignSubScript)
+            fmt.setVerticalAlignment(QTextCharFormat.VerticalAlignment.AlignSubScript)
 
         else:
 
-            fmt.setVerticalAlignment(QTextCharFormat.AlignNormal)
+            fmt.setVerticalAlignment(QTextCharFormat.VerticalAlignment.AlignNormal)
 
         # Set the new format
         self.text.setCurrentCharFormat(fmt)
@@ -1007,6 +1176,54 @@ class Main(QMainWindow):
 
         # Insert list with numbers
         cursor.insertList(QTextListFormat.ListDecimal)
+
+    def head(self, headButton:QToolButton, action:QAction):
+        level = action.property('level')
+        selection = self.text.getSelection()
+        self.text.textCursor().beginEditBlock()
+        text = self.text.textCursor().selectedText()
+        headLevel = level
+        insertHtml = '<h%s>%s</h%s>' % (headLevel, text, headLevel)
+        self.text.textCursor().insertHtml(insertHtml)
+        self.text.textCursor().endEditBlock()
+        self.text.setSelection(selection)
+        headButton.setDefaultAction(action)
+
+    def highlight(self, toolButton:QToolButton, action: QAction):
+        toolButton.setDefaultAction(action)
+        if self.text.textCursor().hasSelection():
+            format = self.text.currentCharFormat()
+            if format.isImageFormat():
+                return
+            self.text.setTextBackgroundColor(QColor(255, 255, 153))
+            self.text.setTextColor(QColor(120, 35, 12))
+            self.text.setFontWeight(700)
+
+    def highlightUnderline(self, toolButton:QToolButton, action: QAction):
+        toolButton.setDefaultAction(action)
+        if self.text.textCursor().hasSelection():
+            format = self.text.currentCharFormat()
+            if format.isImageFormat():
+                return
+            self.text.setCurrentCharFormat(format)
+            self.text.setTextColor(QColor(120, 35, 12))
+            self.text.setFontUnderline(True)
+            self.text.setTextBackgroundColor(QColor(255, 255, 153))
+            self.text.setFontWeight(700)
+
+    def clearFormat(self):
+
+        fmt = self.text.currentCharFormat()
+        fmt.setFontStrikeOut(False)
+        fmt.setVerticalAlignment(QTextCharFormat.VerticalAlignment.AlignNormal)
+        self.text.setCurrentCharFormat(fmt)
+
+        self.text.setFontWeight(QFont.Normal)
+        self.text.setFontItalic(False)
+        self.text.setFontUnderline(False)
+        self.text.setTextBackgroundColor(QColor(255, 255, 255))
+        self.text.setTextColor(QColor(0, 0, 0))
+
 
 def main():
     key_checker['timeout'] = 300
