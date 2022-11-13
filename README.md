@@ -5,7 +5,7 @@ EncryptWriter是一个基于 https://github.com/goldsborough/Writer-Tutorial 开
 。
 # 下载
 
-https://github.com/zqbxx/EncryptWriterreleases
+https://github.com/zqbxx/EncryptWriter/releases
 
 # 使用
 ...
