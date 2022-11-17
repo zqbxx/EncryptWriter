@@ -4,7 +4,8 @@ from PySide6.QtCore import Signal
 from PySide6.QtGui import QDoubleValidator, QImage, QTextImageFormat
 from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QGridLayout, QLineEdit, QCheckBox
 
-from settings import getIcon
+from .settings import getIcon
+from .widgets import checkLock
 
 
 class Image(QDialog):
@@ -13,8 +14,8 @@ class Image(QDialog):
 
     def __init__(self, imageFormat:QTextImageFormat, parent = None):
         QDialog.__init__(self, parent)
+        self.parentWidget = parent
 
-        self.parent = parent
         self.imageFormat = imageFormat
 
         self.rawImage = Image.retriveRawImage(self.imageFormat)
@@ -47,8 +48,8 @@ class Image(QDialog):
         self.height.setValidator(heightValidator)
         self.height.setText(str(round(self.imageFormat.height(), 2)))
 
-        self.width.textEdited.connect(lambda: self.height.setText(str(round(float(self.width.text()) / self.imageRatio, 2))) if self.keepratio.isChecked() else None)
-        self.height.textEdited.connect(lambda: self.width.setText(str(round(float(self.height.text()) * self.imageRatio,2))) if self.keepratio.isChecked() else None)
+        self.width.textEdited.connect(self.updateHeight)
+        self.height.textEdited.connect(self.updateWidth)
 
         self.keepratio = QCheckBox('保持宽高比')
         if abs(self.imageFormat.width() / self.imageFormat.height() - self.imageRatio) < 0.001:
@@ -80,6 +81,23 @@ class Image(QDialog):
         self.setGeometry(300,300,200,100)
         self.setLayout(layout)
 
+    def updateHeight(self):
+        if self.width.text().strip() == '':
+            return
+        if not self.keepratio.isChecked():
+            return
+        height = round(float(self.width.text()) / self.imageRatio, 2)
+        self.height.setText(str(height))
+
+    def updateWidth(self):
+        if self.height.text().strip() == '':
+            return
+        if not self.keepratio.isChecked():
+            return
+        width = round(float(self.height.text()) * self.imageRatio, 2)
+        self.width.setText(str(width))
+
+    @checkLock
     def ok(self):
         newWidth = float(self.width.text())
         newHeight = float(self.height.text())

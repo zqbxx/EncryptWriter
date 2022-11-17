@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QWidget, QGridLayout, QLabel, QDialog
 
-from settings import getIcon
+from .settings import getIcon
 
 
 class WordCount(QDialog):

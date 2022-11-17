@@ -2,8 +2,8 @@ from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QTextFrameFormat, QIntValidator, QColor, QTextCursor
 from PySide6.QtWidgets import QDialog, QLabel, QLineEdit, QGridLayout, QPushButton, QTextEdit
 
-from ext.widgets import getBorderWidgets, getBackgroundColorWidgets, getMarginWidgets
-from settings import getIcon
+from .settings import getIcon
+from .widgets import getBorderWidgets, getBackgroundColorWidgets, getMarginWidgets, checkLock
 
 
 class Quote(QDialog):
@@ -13,7 +13,7 @@ class Quote(QDialog):
     def __init__(self, parent = None):
         QDialog.__init__(self, parent)
 
-        self.parent:QTextEdit = parent
+        self.parentWidget:QTextEdit = parent
         self.currentQuoteFormat:QTextFrameFormat = None
         self.initUI()
 
@@ -79,11 +79,12 @@ class Quote(QDialog):
         self.leftMarginEditor.setText(str(self.currentQuoteFormat.leftMargin()))
         self.paddingEditor.setText(str(self.currentQuoteFormat.padding()))
 
+    @checkLock
     def ok(self):
 
         isInsert = True if self.currentQuoteFormat is None else False
 
-        cursor: QTextCursor = self.parent.textCursor()
+        cursor: QTextCursor = self.parentWidget.textCursor()
         frameFormat = QTextFrameFormat() if isInsert else self.currentQuoteFormat
         frameFormat.setBorder(self.borderWidth.value())
         frameFormat.setBackground(self.bgColorBtn.color())

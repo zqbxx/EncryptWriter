@@ -1,0 +1,5 @@
+{
+  "keyTimeout": 300,
+  "autoLockDoc": "False",
+  "resetTimeoutOnSelect": "True"
+}

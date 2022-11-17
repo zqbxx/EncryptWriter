@@ -6,9 +6,8 @@ from PySide6.QtCore import Signal
 from PySide6.QtGui import QShortcut, QFont
 from emoji_data_python import emoji_data
 
-from settings import getIcon
-
-# TODO: Set icon colour and copy code with color kwarg
+from writerlib.widgets import checkLock
+from .settings import getIcon
 
 VIEW_COLUMNS = 10
 AUTO_SEARCH_TIMEOUT = 500
@@ -160,26 +159,6 @@ class IconBrowser(QtWidgets.QMainWindow):
             else:
                 self.emojiNames = [c.char for c in emoji_data if self.isTextInArray(keyword, c.short_names)]
                 self.emojiInfo = [c.short_names for c in emoji_data if self.isTextInArray(keyword, c.short_names)]
-        # if group != ALL_COLLECTIONS:
-        #     for emoji_char, emoji_info in emoji.EMOJI_DATA.items():
-        #         desc = emoji_info['en']
-        #         if keyword is None:
-        #             self.emojiNames.append(emoji_char.replace(u'\U0000FE0F', ''))
-        #             self.emojiInfo.append(desc)
-        #         else:
-        #             if desc.find(keyword) >= 0:
-        #                 self.emojiNames.append(emoji_char.replace(u'\U0000FE0F', ''))
-        #                 self.emojiInfo.append(desc)
-        # else:
-        #     for emoji_char, emoji_info in emoji.EMOJI_DATA.items():
-        #         desc = emoji_info['en']
-        #         if keyword is None:
-        #             self.emojiNames.append(emoji_char.replace(u'\U0000FE0F', ''))
-        #             self.emojiInfo.append(desc)
-        #         else:
-        #             if desc.find(keyword) >= 0:
-        #                 self.emojiNames.append(emoji_char.replace(u'\U0000FE0F', ''))
-        #                 self.emojiInfo.append(desc)
 
     def isTextInArray(self, text, textArray):
         for t in textArray:
@@ -203,6 +182,7 @@ class IconBrowser(QtWidgets.QMainWindow):
         self._filterTimer.stop()
         self._updateFilter()
 
+    @checkLock
     def _copyIconText(self):
         """
         Copy the name of the currently selected icon to the clipboard.
@@ -267,22 +247,6 @@ class IconModel(QtCore.QStringListModel):
         return QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable
 
     def data(self, index, role):
-        """
-        Re-implemented to return the icon for the current index.
-        Parameters
-        ----------
-        index : QtCore.QModelIndex
-        role : int
-        Returns
-        -------
-        Any
-        """
-
-        # if role == QtCore.Qt.DecorationRole:
-        #     iconString = self.data(index, role=QtCore.Qt.DisplayRole)
-        #     lbl = QLabel(iconString)
-        #     lbl.setMinimumSize(QSize(100, 100))
-        #     return lbl
         return super().data(index, role)
 
 

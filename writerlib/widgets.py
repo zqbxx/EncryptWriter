@@ -4,7 +4,9 @@ from typing import List
 from PySide6 import QtCore, QtGui, QtWidgets, QtUiTools
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QIntValidator
-from PySide6.QtWidgets import QDialog, QLabel, QSlider, QLineEdit
+from PySide6.QtWidgets import QDialog, QLabel, QSlider, QLineEdit, QMessageBox
+
+from writerlib.textedit import TextEdit
 
 
 class ColorButton(QtWidgets.QPushButton):
@@ -98,3 +100,36 @@ def getMarginWidgets(topMargin: int, rightMargin: int, bottomMargin: int, leftMa
 
 
 #TODO QWidgetAction
+
+
+def checkLock(callback):
+    def f(*args, **kwargs):
+        self = args[0]
+
+        parent = None
+
+        if 'parentWidget' in self.__dict__:
+            parent = self.parentWidget
+        elif 'parent' in self.__dict__:
+            try:
+                parent = self.parent
+            except:
+                parent = self.parent()
+        else:
+            return None
+
+        if isinstance(parent, TextEdit):
+            parent = parent.parentWidget
+
+        if parent.isDocumentLocked():
+            QMessageBox.warning(parent, '警告', '锁定状态无法进行操作')
+            return None
+        r = callback(*args, **kwargs)
+        return r
+    return f
+
+def checkLockFunc(parent):
+    if parent.isDocumentLocked():
+        QMessageBox.warning(parent, '警告', '锁定状态无法进行操作')
+        return False
+    return True

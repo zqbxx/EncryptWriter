@@ -2,14 +2,14 @@ from time import strftime
 
 from PySide6.QtWidgets import QDialog, QComboBox, QPushButton, QGridLayout
 
-from settings import getIcon
+from .settings import getIcon
 
 
 class DateTime(QDialog):
     def __init__(self,parent = None):
         QDialog.__init__(self, parent)
 
-        self.parent = parent
+        self.parentWidget = parent
 
         self.formats = ["%A, %d. %B %Y %H:%M",
                         "%A, %d. %B %Y",
@@ -51,7 +51,7 @@ class DateTime(QDialog):
     def insert(self):
 
         # Grab cursor
-        cursor = self.parent.text.textCursor()
+        cursor = self.parentWidget.text.textCursor()
 
         datetime = strftime(self.formats[self.box.currentIndex()])
 

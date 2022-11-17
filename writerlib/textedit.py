@@ -1,20 +1,19 @@
 import base64
 import copy
 from datetime import datetime
-from pathlib import Path
 from time import strftime, gmtime
-from typing import Optional, Set, List
+from typing import Optional, List
 
 import PySide6.QtCore
 from PySide6 import QtCore, QtGui
-from PySide6.QtGui import QImage, QTextImageFormat, QTextCursor, Qt, QCursor, QTextTable, QTextTableCell
-from PySide6.QtWidgets import QTextEdit, QApplication
+from PySide6.QtGui import QImage, QTextImageFormat, QTextCursor, QTextTable, QTextTableCell
+from PySide6.QtWidgets import QTextEdit
 from io import BytesIO
 
 import imghdr
 
-from ext.doc import DocFile, DocInfoBlock, DocBody, DocHead
-from settings import document_properties
+from .doc import DocFile, DocBody, DocInfoBlock, DocHead
+from .settings import document_properties
 
 
 class Selection:
@@ -26,14 +25,28 @@ class Selection:
     def __str__(self):
         return 'start: ' + str(self.start) + ' end: ' + str(self.end)
 
+    def __eq__(self, o: object) -> bool:
+        if isinstance(o, Selection):
+            if o.end == self.end and o.start == self.start:
+                return True
+        return False
+
 
 class TextEdit(QTextEdit):
 
+    style = '''
+    QTextEdit:focus { selection-background-color: rgb(235,123,19) }
+    QTextEdit { selection-background-color: rgb(240,208,140)}
+    '''
+
     def __init__(self, parent: Optional[PySide6.QtWidgets.QWidget]) -> None:
         super().__init__(parent)
+        self.parentWidget = parent
         self.documentProperty = copy.deepcopy(document_properties)
         self.addCreateTime()
-        self.encryptDocument = False
+        self.isEncryptDocument = False
+        self.setStyleSheet(self.style)
+
 
     def mouseMoveEvent(self, e: PySide6.QtGui.QMouseEvent) -> None:
         super().mouseMoveEvent(e)
@@ -110,6 +123,9 @@ class TextEdit(QTextEdit):
         if cursor.hasSelection():
             selection.start = cursor.selectionStart()
             selection.end = cursor.selectionEnd()
+        else:
+            selection.start = cursor.position()
+            selection.end = cursor.position()
         return selection
 
     def setSelection(self, selection: Selection):

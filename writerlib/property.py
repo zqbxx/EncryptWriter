@@ -3,8 +3,9 @@ from typing import List
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QDialog, QPushButton, QGridLayout, QLabel, QLineEdit, QCheckBox
 
-from ext.textedit import TextEdit
-from settings import getIcon
+from .textedit import TextEdit
+from .settings import getIcon
+from .widgets import checkLock
 
 
 class PropertyEditor(QDialog):
@@ -13,7 +14,7 @@ class PropertyEditor(QDialog):
 
     def __init__(self, parent):
         QDialog.__init__(self, parent)
-        self.parent: TextEdit = parent
+        self.parentWidget = parent
         self.initUI()
 
     def initUI(self):
@@ -23,7 +24,7 @@ class PropertyEditor(QDialog):
 
         layout = QGridLayout()
         self.inputs: List[QLineEdit] = list()
-        properties = self.parent.documentProperty
+        properties = self.parentWidget.documentProperty
         for i, (k, v) in enumerate(properties.items()):
 
             label = QLabel(v['display'])
@@ -37,7 +38,7 @@ class PropertyEditor(QDialog):
             layout.addWidget(input, i, 1, 1, 3)
 
         self.encryptDocumentCheckBox = QCheckBox('保存为加密文档')
-        self.encryptDocumentCheckBox.setChecked(self.parent.encryptDocument)
+        self.encryptDocumentCheckBox.setChecked(self.parentWidget.isEncryptDocument)
         layout.addWidget(self.encryptDocumentCheckBox, len(properties.items()), 1, 1, 2)
 
         okButton = QPushButton("确定")
@@ -51,12 +52,13 @@ class PropertyEditor(QDialog):
         self.setGeometry(300, 300, 450, 100)
         self.setLayout(layout)
 
+    @checkLock
     def ok(self):
         for input in self.inputs:
             name = input.property('name')
             value = input.text()
-            self.parent.documentProperty[name]['value'] = value
-        self.parent.encryptDocument = self.encryptDocumentCheckBox.isChecked()
+            self.parentWidget.documentProperty[name]['value'] = value
+        self.parentWidget.isEncryptDocument = self.encryptDocumentCheckBox.isChecked()
         self.propertySaved.emit()
         self.close()
 

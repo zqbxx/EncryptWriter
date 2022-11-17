@@ -1,11 +1,12 @@
-#PYQT5 PyQt4’s QtGui module has been split into PyQt5’s QtGui, QtPrintSupport and QtWidgets modules
-
 import re
 
-from PySide6.QtGui import QTextCursor
-from PySide6.QtWidgets import QDialog, QPushButton, QRadioButton, QTextEdit, QGridLayout
+from PySide6.QtCore import QRegularExpression
+from PySide6.QtGui import QTextCursor, QTextDocument
+from PySide6.QtWidgets import QDialog, QPushButton, QRadioButton, QTextEdit, QGridLayout, QMessageBox
 
-from settings import getIcon
+from .settings import getIcon
+from .textedit import Selection, TextEdit
+from .widgets import checkLock
 
 
 class Find(QDialog):
@@ -13,9 +14,10 @@ class Find(QDialog):
         
         QDialog.__init__(self, parent)
 
-        self.parent = parent
+        self.parentWidget = parent
 
         self.lastStart = 0
+        self.lastSearchResult = Selection(-1, -1)
 
         self.initUI()
  
@@ -68,85 +70,72 @@ class Find(QDialog):
         # By default the normal mode is activated
         self.normalRadio.setChecked(True)
 
+    @checkLock
     def find(self):
 
         # Grab the parent's text
-        text = self.parent.text.toPlainText()
+        text = self.parentWidget.text.toPlainText()
+        textEdit: TextEdit = self.parentWidget.text
+        document = textEdit.document()
 
-        # And the text to find
         query = self.findField.toPlainText()
 
-        if self.normalRadio.isChecked():
-
-            # Use normal string search to find the query from the
-            # last starting position
-            self.lastStart = text.find(query,self.lastStart + 1)
-
-            # If the find() method didn't return -1 (not found)
-            if self.lastStart >= 0:
-
-                end = self.lastStart + len(query)
-                
-                self.moveCursor(self.lastStart,end)
-
-            else:
-
-                # Make the next search start from the begining again
-                self.lastStart = 0
-                
-                self.parent.text.moveCursor(QTextCursor.End)
-
+        currentSelection = textEdit.getSelection()
+        if self.lastStart == -1:
+            self.lastStart = 0
+        elif currentSelection == self.lastSearchResult:
+            self.lastStart = currentSelection.end
         else:
+            self.lastStart = currentSelection.start
 
-            # Compile the pattern
-            pattern = re.compile(query)
+        if self.normalRadio.isChecked():
+            cursor = document.find(query, self.lastStart)
+        else:
+            cursor = document.find(QRegularExpression(query), self.lastStart)
 
-            # The actual search
-            match = pattern.search(text,self.lastStart + 1)
+        selection = Selection(cursor.selectionStart(), cursor.selectionEnd())
+        self.lastStart = cursor.selectionEnd()
 
-            if match:
+        if selection.start == -1 and selection.end == -1:
+            QMessageBox.information(self, '信息', '已搜索到文档末尾，没有找到更多的搜索结果')
+            textEdit.setSelection(Selection(0, 0))
+            self.lastStart = -1
+        else:
+            textEdit.setSelection(selection)
+            self.lastStart = selection.end
 
-                self.lastStart = match.start()
-                
-                self.moveCursor(self.lastStart,match.end())
+        self.lastSearchResult = selection
 
-            else:
-
-                self.lastStart = 0
-                
-                # We set the cursor to the end if the search was unsuccessful
-                self.parent.text.moveCursor(QTextCursor.End)
-
+    @checkLock
     def replace(self):
 
         # Grab the text cursor
-        cursor = self.parent.text.textCursor()
+        cursor:QTextCursor = self.parentWidget.text.textCursor()
 
         # Security
         if cursor.hasSelection():
 
-            # We insert the new text, which will override the selected
-            # text
-            cursor.insertText(self.replaceField.toPlainText())
+            selection = Selection(cursor.selectionStart(), cursor.selectionEnd())
+            if selection == self.lastSearchResult:
+                cursor.insertText(self.replaceField.toPlainText())
+            return
 
-            # And set the new cursor
-            self.parent.text.setTextCursor(cursor)
-
+    @checkLock
     def replaceAll(self):
 
         self.lastStart = 0
 
         self.find()
 
-        # Replace and find until self.lastStart is 0 again
-        while self.lastStart:
+        while self.lastStart != -1:
             self.replace()
             self.find()
 
+    @checkLock
     def moveCursor(self,start,end):
 
         # We retrieve the QTextCursor object from the parent's QTextEdit
-        cursor = self.parent.text.textCursor()
+        cursor = self.parentWidget.text.textCursor()
 
         # Then we set the position to the beginning of the last match
         cursor.setPosition(start)
@@ -156,4 +145,4 @@ class Find(QDialog):
         cursor.movePosition(QTextCursor.Right,QTextCursor.KeepAnchor,end - start)
 
         # And finally we set this new cursor as the parent's 
-        self.parent.text.setTextCursor(cursor)
+        self.parentWidget.text.setTextCursor(cursor)

@@ -8,6 +8,10 @@ DocBodyType = TypeVar("DocBodyType", bound="DocBody")
 DocFileType = TypeVar("DocFileType", bound="DocFile")
 
 
+class CorruptFileException(Exception):
+    pass
+
+
 def pad(data: bytes, length: int, pad: bytes) -> bytes:
     dataLen = len(data)
     padLen = length - dataLen
@@ -28,9 +32,17 @@ def unpad(data: bytes, pad: bytes) -> bytes:
 
 def readInt(length: int, bis: BytesIO) -> int:
     b = bis.read(length)
+    if len(b) != length:
+        raise CorruptFileException('预期读取个%d字节，实际读取%d个字节' % (length, len(b)))
     i = int.from_bytes(b, byteorder='big')
     return i
 
+
+def readBytes(length: int, bis:BytesIO) -> bytes:
+    b = bis.read(length)
+    if len(b) != length:
+        raise CorruptFileException('预期读取个%d字节，实际读取%d个字节' % (length, len(b)))
+    return b
 
 class DocHead:
 
@@ -107,7 +119,7 @@ class DocInfoBlock:
     def fromBytes(cls, data: bytes) -> DocInfoBlockType:
         bis = BytesIO(data)
         block = DocInfoBlock()
-        bName = bis.read(cls.nameLen)
+        bName = readBytes(cls.nameLen, bis)
         block.name = unpad(bName, cls.padData)
         block.value = bis.read()
         return block
@@ -153,10 +165,10 @@ class DocFile:
         df = DocFile()
         infoBlockCount = DocHead.getDocInfoBlockCount(bis)
         headLen = DocHead.getHeadBlockBytesLen(infoBlockCount)
-        df.docHead = DocHead.fromBytes(bis.read(headLen))
+        df.docHead = DocHead.fromBytes(readBytes(headLen, bis))
         df.docInfoBlock = list()
         for infoLen in df.docHead.docInfoBlockLen:
-            infoBlock = DocInfoBlock.fromBytes(bis.read(infoLen))
+            infoBlock = DocInfoBlock.fromBytes(readBytes(infoLen, bis))
             df.docInfoBlock.append(infoBlock)
-        df.docBody = DocBody.fromBytes(bis.read(df.docHead.docBodyLen))
+        df.docBody = DocBody.fromBytes(readBytes(df.docHead.docBodyLen, bis))
         return df

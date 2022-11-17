@@ -4,18 +4,18 @@ from typing import List
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextTableFormat, QColor, QTextFrameFormat, QTextLength, QIntValidator, QTextCursor, QAction
 from PySide6.QtWidgets import QMessageBox, QDialog, QLabel, QSpinBox, QPushButton, QGridLayout, QTextEdit, QSlider, \
-    QLineEdit, QComboBox, QToolButton, QColorDialog
+    QLineEdit, QToolButton, QColorDialog
 
-from ext.textedit import TextEdit
-from ext.widgets import ColorButton
-from settings import getIcon
+from .settings import getIcon
+from .textedit import TextEdit
+from .widgets import ColorButton, checkLock, checkLockFunc
 
 
 class TableEditor(QDialog):
     def __init__(self, parent=None):
         QDialog.__init__(self, parent)
 
-        self.parent: QTextEdit = parent
+        self.parentWidget: QTextEdit = parent
         self.currentTableFormat: QTextTableFormat = None
 
         self.initUI()
@@ -137,11 +137,12 @@ class TableEditor(QDialog):
         self.rows.setEnabled(False)
         self.cols.setEnabled(False)
 
+    @checkLock
     def insert(self):
 
         isInsert = True if self.currentTableFormat is None else False
 
-        cursor: QTextCursor = self.parent.textCursor()
+        cursor: QTextCursor = self.parentWidget.textCursor()
 
         # Get the configurations
         rows = self.rows.value()
@@ -185,11 +186,15 @@ class TableEditor(QDialog):
             if self.bottomMargin.isEnabled():
                 fmt.setBottomMargin(float(self.bottomMargin.text()))
 
+            self.parentWidget.textCursor().beginEditBlock()
             if isInsert:
                 cursor.insertTable(rows, cols, fmt)
+            else:
+                cursor.currentTable().setFormat(fmt)
+            self.parentWidget.textCursor().endEditBlock()
 
             try:
-                self.parent.textCursor().beginEditBlock()
+                self.parentWidget.textCursor().joinPreviousEditBlock()
                 if isInsert:
                     width = int(100 / cols)
                     columnWidthConstraints = []
@@ -198,9 +203,6 @@ class TableEditor(QDialog):
                     columnWidthConstraints[self.cols.value() - 1] = QTextLength(QTextLength.Type.PercentageLength,
                                                                                 100 - width * (cols - 1))
                     fmt.setColumnWidthConstraints(columnWidthConstraints)
-                    cursor.currentTable().setFormat(fmt)
-
-                else:
                     cursor.currentTable().setFormat(fmt)
 
                 if self.bgColorBtn.isEnabled():
@@ -212,7 +214,7 @@ class TableEditor(QDialog):
                             cellFormat.setBackground(self.bgColorBtn.color())
                             cell.setFormat(cellFormat)
             finally:
-                self.parent.textCursor().endEditBlock()
+                self.parentWidget.textCursor().endEditBlock()
 
             self.close()
 
@@ -223,13 +225,13 @@ class ColumnEditor(QDialog):
 
     def __init__(self, parent=None):
         QDialog.__init__(self, parent)
-        self.parent: QTextEdit = parent
+        self.parentWidget: QTextEdit = parent
         self.initUI()
 
     def initUI(self):
         self.setWindowIcon(getIcon('tableColumn'))
 
-        t = self.parent.textCursor().currentTable()
+        t = self.parentWidget.textCursor().currentTable()
         columns: List[QTextLength] = t.format().columnWidthConstraints()
         typeNames = {
             QTextLength.Type.PercentageLength: ['%', 'tabColPerWidth'],
@@ -285,8 +287,9 @@ class ColumnEditor(QDialog):
         self.setGeometry(300, 300, 300, 200)
         self.setLayout(layout)
 
+    @checkLock
     def save(self):
-        t = self.parent.textCursor().currentTable()
+        t = self.parentWidget.textCursor().currentTable()
 
         format = t.format()
         if format.isTableFormat():
@@ -327,6 +330,8 @@ def setCellsBackgroundColor(text: TextEdit):
     dlg = QColorDialog(text)
     dlg.setCurrentColor(latestCell.format().background().color())
     if dlg.exec():
+        if not checkLockFunc(text.parentWidget):
+            return
         newColor = dlg.currentColor()
         text.textCursor().beginEditBlock()
         cells = text.getTableCells(t, firstRow, firstColumn, numRows, numColumns)

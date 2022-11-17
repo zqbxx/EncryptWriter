@@ -1,47 +1,71 @@
 # -*- coding: utf-8 -*-
 import os
-from functools import partial
+import time
+from functools import partial, lru_cache
+
+import qtawesome as qta
 
 import keymanager.encryptor
+from keymanager.menus import activate_key, add_key, add_keymanager_menu, reload_key
 
-import ext.table
-from ext.property import PropertyEditor
-from ext.textedit import Selection
+from writerlib import emo, dt, textedit, table, image, wordcount, quote, systemsetting
+from writerlib.find import Find
+from writerlib.property import PropertyEditor
+from writerlib.settings import getIcon, Settings, getIconOpt, getIconName, addDefaultColorToFontOptions
+from writerlib.textedit import Selection
 
 os.environ['QT_API'] = 'PySide6'
 from keymanager.dialogs import KeyMgrDialog
 from keymanager.encryptor import encrypt_data, decrypt_data
 from keymanager.key import KEY_CHECKER as key_checker, start_check_key_thread, KEY_CACHE as key_cache, \
-    add_key_invalidate_callback, add_current_keystatus_callback
-
-from settings import getIcon
+    add_key_invalidate_callback, add_current_keystatus_callback, Key, set_key_timeout
 
 import sys
 from pathlib import Path
 
-from PySide6 import QtPrintSupport, QtCore
-from PySide6.QtCore import QPoint
+from PySide6 import QtPrintSupport, QtGui
+from PySide6.QtCore import QPoint, Signal, QMetaType
 from PySide6.QtGui import QAction, QIcon, QContextMenuEvent, Qt, QImage, QTextCharFormat, QFont, QTextCursor, \
     QTextListFormat, QColor
 from PySide6.QtWidgets import QMainWindow, QFontComboBox, QSpinBox, QMessageBox, QMenu, QFileDialog, QDialog, \
-    QColorDialog, QApplication, QPushButton, QComboBox, QCommandLinkButton, QToolButton
+    QColorDialog, QApplication, QPushButton, QToolButton, QStackedLayout, QWidget, \
+    QLabel, QSizePolicy, QProgressBar, QLCDNumber
 
-from ext import dt, wordcount, image, emo, textedit, quote, table
-from ext.find import Find
+
+def checkLock(callback):
+    def f(*args, **kwargs):
+        main:Main = args[0]
+        if main.isDocumentLocked():
+            QMessageBox.warning(main, '警告', '锁定状态无法进行操作')
+            return None
+        r = callback(*args, **kwargs)
+        return r
+    return f
 
 
 class Main(QMainWindow):
+
+    autoLockEditor = Signal(Key, bool)
+    updateStatusbarIcon = Signal(Key)
 
     def __init__(self,parent=None):
         QMainWindow.__init__(self,parent)
 
         self.filename = ""
-
         self.changesSaved = True
+        self.defaultKeyMark = bytes()
+        self.encryptedMark = bytes()
+
+        self.encrypt_lock_text = ""  # 锁定时记录的加密文件内容
 
         self.emoji_browser: emo.IconBrowser = None
 
+        self.systemSetting = Settings()
         self.initUI()
+        self.autoLockEditor.connect(self.lock)
+        self.updateStatusbarIcon.connect(self.updateStatusbarKeyIndicator)
+        add_key_invalidate_callback(self.currentKeyAboutToTimeout)
+        set_key_timeout(self.systemSetting.keyTimeout)
 
 
     def initToolbar(self):
@@ -61,6 +85,16 @@ class Main(QMainWindow):
         self.saveAction.setShortcut("Ctrl+S")
         self.saveAction.triggered.connect(self.save)
 
+        self.closeAction = QAction(getIcon('close'), '关闭', self)
+        self.closeAction.setStatusTip("关闭文档")
+        self.closeAction.triggered.connect(self.closeDoc)
+
+        self.lockAction = QAction(getIcon('unlock'), '未锁定', self)
+        self.lockAction.setShortcut('锁定文档后，文档不能被编辑、保存和查看')
+        self.lockAction.triggered.connect(self.lock)
+        self.lockAction.setProperty('locked', False)
+        self.lockAction.setProperty('alwaysEnabled', True)
+
         self.printAction = QAction(getIcon('print'), "打印", self)
         self.printAction.setStatusTip("打印文档")
         self.printAction.setShortcut("Ctrl+P")
@@ -70,6 +104,10 @@ class Main(QMainWindow):
         self.previewAction.setStatusTip("在打印前预览文档")
         self.previewAction.setShortcut("Ctrl+Shift+P")
         self.previewAction.triggered.connect(self.preview)
+
+        self.sysSettingAction = QAction(getIcon('sysSetting'), '系统设置', self)
+        self.sysSettingAction.setStatusTip('设置系统默认属性')
+        self.sysSettingAction.triggered.connect(self.sysSetting)
 
         self.propertyAction = QAction(getIcon('property'), '文档属性', self)
         self.propertyAction.triggered.connect(self.editProperty)
@@ -105,7 +143,7 @@ class Main(QMainWindow):
         self.undoAction.triggered.connect(self.text.undo)
 
         self.clearRedoUndoAction = QAction(getIcon('clearUndoRedo'), "清除撤销、重做历史", self)
-        self.clearRedoUndoAction.triggered.connect(lambda : self.text.document().clearUndoRedoStacks())
+        self.clearRedoUndoAction.triggered.connect(self.clearUndoRedo)
 
         self.redoAction = QAction(getIcon('redo'), "重做", self)
         self.redoAction.setStatusTip("重做上次撤销的操作")
@@ -156,6 +194,8 @@ class Main(QMainWindow):
         self.toolbar.addAction(self.newAction)
         self.toolbar.addAction(self.openAction)
         self.toolbar.addAction(self.saveAction)
+        self.toolbar.addAction(self.closeAction)
+        self.toolbar.addAction(self.lockAction)
 
         self.toolbar.addSeparator()
 
@@ -190,44 +230,45 @@ class Main(QMainWindow):
 
         self.addToolBarBreak()
 
+    @checkLock
+    def clearUndoRedo(self):
+        return self.text.document().clearUndoRedoStacks()
 
     def initFormatbar(self):
 
-        fontBox = QFontComboBox(self)
-        fontBox.currentFontChanged.connect(self.font)
+        self.fontBox = QFontComboBox(self)
+        self.fontBox.currentFontChanged.connect(self.font)
 
-        fontSize = QSpinBox(self)
+        self.fontSize = QSpinBox(self)
 
         # Will display " pt" after each value
-        fontSize.setSuffix(" pt")
+        self.fontSize.setSuffix(" pt")
 
-        fontSize.valueChanged.connect(lambda size: self.text.setFontPointSize(size))
+        self.fontSize.valueChanged.connect(self.setFontSize)
 
-        fontSize.setValue(14)
-
-        defaultFont = fontBox.currentFont()
+        defaultFont = self.fontBox.currentFont()
         self.initDocumentDefaultSettings(defaultFont)
 
-        fontColor = QAction(getIcon('fontColor'),"修改文字颜色",self)
-        fontColor.triggered.connect(self.fontColorChanged)
+        self.fontColor = QAction(getIcon('fontColor'),"修改文字颜色",self)
+        self.fontColor.triggered.connect(self.fontColorChanged)
 
-        boldAction = QAction(getIcon('bold'),"粗体",self)
-        boldAction.triggered.connect(self.bold)
+        self.boldAction = QAction(getIcon('bold'),"粗体",self)
+        self.boldAction.triggered.connect(self.bold)
 
-        italicAction = QAction(getIcon('italic'),"斜体",self)
-        italicAction.triggered.connect(self.italic)
+        self.italicAction = QAction(getIcon('italic'),"斜体",self)
+        self.italicAction.triggered.connect(self.italic)
 
-        underlAction = QAction(getIcon('underl'),"下划线",self)
-        underlAction.triggered.connect(self.underline)
+        self.underlAction = QAction(getIcon('underl'),"下划线",self)
+        self.underlAction.triggered.connect(self.underline)
 
-        strikeAction = QAction(getIcon('strike'),"删除线",self)
-        strikeAction.triggered.connect(self.strike)
+        self.strikeAction = QAction(getIcon('strike'),"删除线",self)
+        self.strikeAction.triggered.connect(self.strike)
 
-        superAction = QAction(getIcon('super'),"上标",self)
-        superAction.triggered.connect(self.superScript)
+        self.superAction = QAction(getIcon('super'),"上标",self)
+        self.superAction.triggered.connect(self.superScript)
 
-        subAction = QAction(getIcon('sub'), "下标",self)
-        subAction.triggered.connect(self.subScript)
+        self.subAction = QAction(getIcon('sub'), "下标",self)
+        self.subAction.triggered.connect(self.subScript)
 
         alignLeft = QAction(getIcon('alignLeft'),"左对齐",self)
         alignLeft.triggered.connect(self.alignLeft)
@@ -249,8 +290,8 @@ class Main(QMainWindow):
         dedentAction.setShortcut("Shift+Tab")
         dedentAction.triggered.connect(self.dedent)
 
-        backColor = QAction(getIcon('backColor'),"修改背景色",self)
-        backColor.triggered.connect(self.backColor)
+        self.backColor = QAction(getIcon('backColor'),"修改背景色",self)
+        self.backColor.triggered.connect(self.changeBackgroundColor)
 
         headButton = QToolButton(self)
 
@@ -298,22 +339,22 @@ class Main(QMainWindow):
 
         self.formatbar = self.addToolBar("Format")
 
-        self.formatbar.addWidget(fontBox)
-        self.formatbar.addWidget(fontSize)
+        self.formatbar.addWidget(self.fontBox)
+        self.formatbar.addWidget(self.fontSize)
 
         self.formatbar.addSeparator()
 
-        self.formatbar.addAction(fontColor)
-        self.formatbar.addAction(backColor)
+        self.formatbar.addAction(self.fontColor)
+        self.formatbar.addAction(self.backColor)
 
         self.formatbar.addSeparator()
 
-        self.formatbar.addAction(boldAction)
-        self.formatbar.addAction(italicAction)
-        self.formatbar.addAction(underlAction)
-        self.formatbar.addAction(strikeAction)
-        self.formatbar.addAction(superAction)
-        self.formatbar.addAction(subAction)
+        self.formatbar.addAction(self.boldAction)
+        self.formatbar.addAction(self.italicAction)
+        self.formatbar.addAction(self.underlAction)
+        self.formatbar.addAction(self.strikeAction)
+        self.formatbar.addAction(self.superAction)
+        self.formatbar.addAction(self.subAction)
 
         self.formatbar.addSeparator()
 
@@ -332,9 +373,17 @@ class Main(QMainWindow):
 
         self.formatbar.addAction(clearAction)
 
+        self.fontSize.setValue(14)
+
+    @checkLock
+    def setFontSize(self, fontSize):
+        self.text.setFontPointSize(fontSize)
+        self.updateFormatBarIcon()
+
     def initDocumentDefaultSettings(self, defaultFont):
         defaultFont.setPointSize(14)
         self.text.document().setDefaultFont(defaultFont)
+        self.text.setTextBackgroundColor(QColor('white'))
 
     def initMenubar(self):
 
@@ -343,7 +392,9 @@ class Main(QMainWindow):
         file = menubar.addMenu("文件")
         edit = menubar.addMenu("编辑")
         view = menubar.addMenu("视图")
-
+        key = menubar.addMenu('密钥')
+        add_keymanager_menu(key, self)
+        #key.menuAction().setProperty('alwaysEnabled', True)
         # Add the most important actions to the menubar
 
         file.addAction(self.newAction)
@@ -351,7 +402,7 @@ class Main(QMainWindow):
         file.addAction(self.saveAction)
         file.addAction(self.printAction)
         file.addAction(self.previewAction)
-        file.addAction(self.keyMgrAction)
+        file.addAction(self.sysSettingAction)
 
         edit.addAction(self.undoAction)
         edit.addAction(self.redoAction)
@@ -390,7 +441,20 @@ class Main(QMainWindow):
         self.initFormatbar()
         self.initMenubar()
 
-        self.setCentralWidget(self.text)
+        self.layout = QStackedLayout()
+        self.layout.addWidget(self.text)
+        lockLabel = QLabel('已锁定')
+        lockLabel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        lockLabelFont = lockLabel.font()
+        lockLabelFont.setPointSize(50)
+        lockLabel.setFont(lockLabelFont)
+        lockLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layout.addWidget(lockLabel)
+        self.setLayout(self.layout)
+        self.layoutWidget = QWidget()
+        self.layoutWidget.setLayout(self.layout)
+        self.setCentralWidget(self.layoutWidget)
+        self.text.setFocus()
 
         # Initialize a statusbar for the window
         self.statusbar = self.statusBar()
@@ -406,35 +470,80 @@ class Main(QMainWindow):
 
         self.text.textChanged.connect(self.changed)
 
-        self.setGeometry(100,100,1030,800)
+        self.setGeometry(100, 100, 1030, 800)
         self.setWindowTitle("Writer")
         self.setWindowIcon(QIcon("icons/icon.png"))
 
     def initStatusBar(self):
-        btn = QPushButton('', self)
-        btn.setFlat(True)
+        self.statusbarKeyIndicator = QPushButton('', self)
+        self.statusbarKeyIndicator.setFlat(True)
+        self.statusbarTimtoutProgressbarIndicator = QLCDNumber()
+        # self.statusbarTimtoutProgressbarIndicator.setStyleSheet('''
+        # QLCDNumber {background-color:yellow}
+        # ''')
+        #self.statusbarTimtoutProgressbarIndicator.setPalette(QtGui.Qt.red)
+        QtGui.Qt
+        self.statusbarTimtoutProgressbarIndicator.display(9999)
+        self.statusbarTimtoutProgressbarIndicator.setMaximumSize(70, 20)
+        self.statusbarTimtoutProgressbarIndicator.setSmallDecimalPoint(True)
+        self.statusbarTimtoutProgressbarIndicator.setSegmentStyle(QLCDNumber.SegmentStyle.Flat)
+        self.statusbarTimtoutProgressbarIndicator.setDigitCount(4)
         unlock = getIcon('unlock')
         lock = getIcon('lock')
-        add_current_keystatus_callback(lambda key: btn.setIcon(unlock if key is not None and not key.timeout else lock))
-        self.statusbar.addPermanentWidget(btn)
+        add_current_keystatus_callback(lambda key: self.updateStatusbarIcon.emit(key))
+        self.statusbar.addPermanentWidget(self.statusbarKeyIndicator)
+        self.statusbar.addPermanentWidget(self.statusbarTimtoutProgressbarIndicator)
+
+    def updateStatusbarKeyIndicator(self, key:Key):
+        @lru_cache(maxsize=2)
+        def getLockIcon(name: str):
+            return getIcon(name)
+        icon = getLockIcon('unlock') if key is not None and not key.timeout else getLockIcon('lock')
+        self.statusbarKeyIndicator.setIcon(icon)
+
+        currentKey = key_cache.get_cur_key()
+        if currentKey is not None:
+            if currentKey.timeout:
+                self.statusbarTimtoutProgressbarIndicator.display(0)
+            else:
+                lastaccess = currentKey.last_access
+                number = int(self.systemSetting.keyTimeout - (time.time() - lastaccess))
+                self.statusbarTimtoutProgressbarIndicator.display(number)
+        else:
+            self.statusbarTimtoutProgressbarIndicator.display(9999)
+
+    def currentKeyAboutToTimeout(self, key:Key):
+        current_key = key_cache.get_cur_key()
+        if current_key.id != key.id:
+            return
+
+        if self.systemSetting.autoLockDoc:
+            tempKey = current_key.copy()
+            self.autoLockEditor.emit(tempKey, True)
 
     def changed(self, changesSaved=False):
         self.changesSaved = changesSaved
         self.updateWindowsTitle()
 
     def updateWindowsTitle(self):
+        encryptMsg = ' [加密文档] ' if self.text.isEncryptDocument else ' '
         if self.changesSaved:
             if not self.filename:
                 self.setWindowTitle('Writer')
             else:
-                self.setWindowTitle('Writer ' + self.filename )
+                self.setWindowTitle('Writer -' + encryptMsg + self.filename )
         else:
             if not self.filename:
-                self.setWindowTitle('Writer - [未保存]')
+                self.setWindowTitle('Writer -' + encryptMsg + '[未保存]')
             else:
-                self.setWindowTitle('Writer ' + self.filename + ' [未保存]')
+                self.setWindowTitle('Writer -' + encryptMsg + self.filename + ' [未保存]')
 
     def closeEvent(self,event):
+
+        if self.lockAction.property('locked'):
+            QMessageBox.critical(self, '错误', '系统被锁定，可能存在未保存的内容')
+            event.ignore()
+            return
 
         if self.changesSaved:
 
@@ -468,6 +577,7 @@ class Main(QMainWindow):
             else:
                 event.ignore()
 
+    @checkLock
     def context(self,pos: QPoint):
 
         textCursor = self.text.textCursor()
@@ -641,6 +751,7 @@ class Main(QMainWindow):
 
             self.text.contextMenuEvent(event)
 
+    @checkLock
     def showMenu(self, menu:QMenu, pos):
         # Convert the widget coordinates into global coordinates
         pos = self.mapToGlobal(pos)
@@ -660,6 +771,7 @@ class Main(QMainWindow):
 
         menu.show()
 
+    @checkLock
     def removeRow(self):
 
         # Grab the cursor
@@ -675,6 +787,7 @@ class Main(QMainWindow):
         # Delete the cell's row
         table.removeRows(cell.row(),1)
 
+    @checkLock
     def removeCol(self):
 
         # Grab the cursor
@@ -690,6 +803,7 @@ class Main(QMainWindow):
         # Delete the cell's column
         table.removeColumns(cell.column(),1)
 
+    @checkLock
     def insertRow(self):
 
         # Grab the cursor
@@ -705,6 +819,7 @@ class Main(QMainWindow):
         # Insert a new row at the cell's position
         table.insertRows(cell.row(),1)
 
+    @checkLock
     def insertCol(self):
 
         # Grab the cursor
@@ -720,7 +835,7 @@ class Main(QMainWindow):
         # Insert a new row at the cell's position
         table.insertColumns(cell.column(),1)
 
-
+    @checkLock
     def toggleToolbar(self):
 
         state = self.toolbar.isVisible()
@@ -728,6 +843,7 @@ class Main(QMainWindow):
         # Set the visibility to its inverse
         self.toolbar.setVisible(not state)
 
+    @checkLock
     def toggleFormatbar(self):
 
         state = self.formatbar.isVisible()
@@ -735,6 +851,7 @@ class Main(QMainWindow):
         # Set the visibility to its inverse
         self.formatbar.setVisible(not state)
 
+    @checkLock
     def toggleStatusbar(self):
 
         state = self.statusbar.isVisible()
@@ -742,70 +859,112 @@ class Main(QMainWindow):
         # Set the visibility to its inverse
         self.statusbar.setVisible(not state)
 
+    @checkLock
     def new(self):
+        # spawn = Main()
+        #
+        # spawn.show()
+        self.closeDoc()
 
-        spawn = Main()
-
-        spawn.show()
-
+    @checkLock
     def open(self):
 
-        if not self.changesSaved:
-            result = QMessageBox.question(self, '文件未保存', '文件未保存，是否继续打开文件？', QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if result == QMessageBox.StandardButton.No:
-                return
+        oldFileName = self.filename
+        isEncryptDocument = self.text.isEncryptDocument
+        changSaved = self.changesSaved
 
-        self.filename = QFileDialog.getOpenFileName(self, 'Open File', ".", "(*.writer)")[0]
-        content = Path(self.filename).read_bytes()
-        self.text.encryptDocument = keymanager.encryptor.is_encrypt_data(content)
+        opened = False
 
-        current_key = key_cache.get_cur_key()
+        def restore():
+            self.filename = oldFileName
+            self.text.isEncryptDocument = isEncryptDocument
+            self.changesSaved = changSaved
+            self.updateWindowsTitle()
 
-        if self.text.encryptDocument:
+        try:
+            if not self.changesSaved:
+                result = QMessageBox.question(self, '文件未保存', '文件未保存，是否继续打开文件？', QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if result == QMessageBox.StandardButton.No:
+                    return restore()
 
-            if current_key is None:
-                QMessageBox.critical(self, '密钥错误', '没有激活的密钥')
-                self.filename = ''
-                return
+            self.filename = QFileDialog.getOpenFileName(self, 'Open File', ".", "(*.writer)")[0]
+            if self.filename is None or not Path(self.filename).exists() or not Path(self.filename).is_file():
+                return restore()
 
-            if current_key.timeout:
-                QMessageBox.critical(self, '密钥错误', '密钥超时')
-                self.filename = ''
-                return
+            content = Path(self.filename).read_bytes()
+            self.text.isEncryptDocument = keymanager.encryptor.is_encrypt_data(content)
 
-        # Get filename and show only .writer files
-        #PYQT5 Returns a tuple in PyQt5, we only need the filename
+            current_key = key_cache.get_cur_key()
 
+            if self.text.isEncryptDocument:
 
-        if self.filename:
-            if self.text.encryptDocument:
-                encrypt_content = Path(self.filename).read_bytes()
-                content = decrypt_data(current_key.key, encrypt_content)
-            else:
-                content = Path(self.filename).read_bytes()
-            html, prop = self.text.docfromBytes(content)
-            self.text.documentProperty = self.text.dictToDocumentProperty(prop, self.text.documentProperty)
+                if current_key is None:
+                    loaded = self.showLoadKeyDialog()
+                    current_key = key_cache.get_cur_key()
+                    if not loaded:
+                        return restore()
+
+                if current_key.timeout:
+                    activated = self.showActivateKeyDialog()
+                    if not activated:
+                        return restore()
+                    current_key = key_cache.get_cur_key()
+
+            if self.filename:
+                if self.text.isEncryptDocument:
+                    encrypt_content = Path(self.filename).read_bytes()
+                    content = decrypt_data(current_key.key, encrypt_content)
+                else:
+                    content = Path(self.filename).read_bytes()
+                try:
+                    html, prop = self.text.docfromBytes(content)
+                except Exception as e:
+                    QMessageBox.critical(self, '错误', '文件损坏或密钥不匹配\n' + str(e))
+                    return restore()
+
+                if self.text.isEncryptDocument:
+                    self.defaultKeyMark = os.urandom(1024)
+                    self.encryptedMark = encrypt_data(current_key.key, self.defaultKeyMark)
+
+                self.text.documentProperty = self.text.dictToDocumentProperty(prop, self.text.documentProperty)
+                self.changed(changesSaved=True)
+                opened = True
+        except Exception as e:
+            QMessageBox.critical(self,'未知错误', str(e))
+            return restore()
+
+        if opened:
             self.text.textChanged.disconnect(self.changed)
-            self.changed(changesSaved=True)
             self.text.setText(html)
             self.text.textChanged.connect(self.changed)
 
+    @checkLock
     def save(self):
 
         current_key = key_cache.get_cur_key()
 
-        if self.text.encryptDocument:
+        if self.text.isEncryptDocument:
 
             if current_key is None:
-                QMessageBox.critical(self, '密钥错误', '没有激活的密钥')
-                return False
+                loaded = self.showLoadKeyDialog()
+                if not loaded:
+                    return False
+                current_key = key_cache.get_cur_key()
 
             if current_key.timeout:
-                QMessageBox.critical(self, '密钥错误', '密钥超时')
-                return False
+                activated = self.showActivateKeyDialog()
+                if not activated:
+                    return False
+                current_key = key_cache.get_cur_key()
 
-        # Only open dialog if there is no filename yet
-        #PYQT5 Returns a tuple in PyQt5, we only need the filename
+            decryptedMark = decrypt_data(current_key.key, self.encryptedMark)
+
+            if decryptedMark != self.defaultKeyMark:
+                result = QMessageBox.question(self, '警告', '检测到打开文档使用的密钥与保存文档使用的密钥不同\n是否继续保存？',
+                                              QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if result == QMessageBox.StandardButton.No:
+                    return False
+
         if not self.filename:
           self.filename = QFileDialog.getSaveFileName(self, 'Save File')[0]
 
@@ -818,9 +977,11 @@ class Main(QMainWindow):
             self.text.updateEditTime()
             prop = self.text.documentPropertyToDict(self.text.documentProperty)
             content = self.text.docToBytes(self.text.toHtml(), prop)
-            if self.text.encryptDocument:
+            if self.text.isEncryptDocument:
                 encrypt_content = encrypt_data(current_key.key, content)
                 Path(self.filename).write_bytes(encrypt_content)
+                # 重新加密，避免更换key之后每次保存都提示
+                self.encryptedMark = encrypt_data(current_key.key, self.defaultKeyMark)
             else:
                 Path(self.filename).write_bytes(content)
 
@@ -829,6 +990,128 @@ class Main(QMainWindow):
             return True
         return False
 
+    @checkLock
+    def closeDoc(self):
+        if not self.changesSaved:
+
+            result = QMessageBox.question(self, '警告',
+                                          '文档发生变化，是否需要保存？',
+                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if result == QMessageBox.StandardButton.Yes:
+                result = self.save()
+                if not result:
+                    return
+
+        self.text.clear()
+        self.filename = ''
+        self.text.isEncryptDocument = False
+        self.changesSaved = True
+        self.updateWindowsTitle()
+
+    def showLoadKeyDialog(self):
+        result = QMessageBox.question(self, '错误', '没有激活的密钥，是否需要现在加载密钥？',
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if result == QMessageBox.StandardButton.Yes:
+            add_key(self)
+            current_key = key_cache.get_cur_key()
+            if current_key is not None:
+                return True
+        return False
+
+    def showActivateKeyDialog(self):
+        result = QMessageBox.question(self, '错误', '密钥已经超时，是否现在激活？',
+                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        currentKey = key_cache.get_cur_key()
+        if result == QMessageBox.StandardButton.Yes:
+            reload_key(currentKey, self)
+            current_key = key_cache.get_cur_key()
+            if current_key is not None and not current_key.timeout:
+                return True
+        return False
+
+    def lock(self, key:Key=None, forceLock=False):
+        locked = self.isDocumentLocked()
+
+        currentKey = key_cache.get_cur_key() if key is None else key
+        if not forceLock:
+            if currentKey is None:
+                result = self.showLoadKeyDialog()
+                if not result:
+                    return
+
+            currentKey = key_cache.get_cur_key() if key is None else key
+            if currentKey.timeout:
+                result = self.showActivateKeyDialog()
+                if not result:
+                    return
+
+        if locked and not forceLock:
+            self.doUnLock(currentKey)
+            self.setDocumentLock(False)
+        elif forceLock and locked:
+            pass
+        else:
+            self.doLock(currentKey)
+            self.setDocumentLock(True)
+
+    def isDocumentLocked(self):
+        return self.lockAction.property('locked')
+
+    def setDocumentLock(self, locked:bool):
+        icon = getIcon('lock') if locked else getIcon('unlock')
+        index = 1 if locked else 0
+        self.lockAction.setProperty('locked', locked)
+        self.lockAction.setIcon(icon)
+        self.layout.setCurrentIndex(index)
+
+    def doLock(self, key: Key):
+
+        self.text.setEnabled(False)
+        self.text.setReadOnly(True)
+
+        for action in self.toolbar.actions():
+            if action.property('alwaysEnabled'):
+                continue
+            action.setEnabled(False)
+
+        for action in self.formatbar.actions():
+            if action.property('alwaysEnabled'):
+                continue
+            action.setEnabled(False)
+
+        for index, action in enumerate(self.menuBar().actions()):
+            if action.property('alwaysEnabled'):
+                continue
+            action.setEnabled(False)
+        text = self.text.toHtml()
+        self.encrypt_text = encrypt_data(key.key, text.encode('utf-8'))
+        self.text.textCursor().beginEditBlock()
+        self.text.textChanged.disconnect(self.changed)
+        self.text.clear()
+        self.text.textChanged.connect(self.changed)
+        self.text.textCursor().endEditBlock()
+
+    def doUnLock(self, key: Key):
+        text = decrypt_data(key.key, self.encrypt_text).decode('utf-8')
+        self.text.textCursor().joinPreviousEditBlock()
+        self.text.textChanged.disconnect(self.changed)
+        self.text.setHtml(text)
+        self.text.textChanged.connect(self.changed)
+        self.text.textCursor().endEditBlock()
+
+        self.text.setEnabled(True)
+        self.text.setReadOnly(False)
+
+        for action in self.toolbar.actions():
+            action.setEnabled(True)
+
+        for action in self.formatbar.actions():
+            action.setEnabled(True)
+
+        for index, action in enumerate(self.menuBar().actions()):
+            action.setEnabled(True)
+
+    @checkLock
     def preview(self):
 
         # Open preview dialog
@@ -839,17 +1122,26 @@ class Main(QMainWindow):
 
         preview.exec_()
 
+    @checkLock
+    def sysSetting(self):
+        editor = systemsetting.SysSettingEditor(self)
+        editor.exec()
+        editor.destroy()
+
+    @checkLock
     def editProperty(self):
         prop = PropertyEditor(self.text)
         prop.propertySaved.connect(lambda : self.changed())
         prop.exec()
         prop.destroy()
 
+    @checkLock
     def keyManager(self):
         kmd = KeyMgrDialog()
         kmd.exec()
         kmd.destroy()
 
+    @checkLock
     def printHandler(self):
 
         # Open printing dialog
@@ -859,6 +1151,13 @@ class Main(QMainWindow):
             self.text.document().print_(dialog.printer())
 
     def cursorPosition(self):
+
+        if self.systemSetting.resetTimeoutOnSelect:
+            currentKey = key_cache.get_cur_key()
+            if currentKey is not None and not currentKey.timeout:
+                currentKey.touch()
+
+        self.updateFormatBarIcon()
 
         cursor = self.text.textCursor()
 
@@ -877,14 +1176,63 @@ class Main(QMainWindow):
 
         self.statusbar.showMessage(message)
 
+    def updateFormatBarIcon(self):
+        # TODO 需要处理从右向左选择时的属性
+        backgroundColor = self.text.textBackgroundColor()
+        font = self.text.currentFont()
+        size = font.pointSize()
+        color = self.text.textColor()
+        bold = font.bold()
+        italic = font.italic()
+        underLine = font.underline()
+        strike = font.strikeOut()
+
+        format = self.text.currentCharFormat()
+        alignSuper = format.verticalAlignment() == QTextCharFormat.VerticalAlignment.AlignSuperScript
+        alignSub = format.verticalAlignment() == QTextCharFormat.VerticalAlignment.AlignSubScript
+
+        @lru_cache(maxsize=128)
+        def getFormatbarIcon(name:str, colorName:str, status:bool):
+            iconOpt = getIconOpt(name)
+            iconOpt = (iconOpt if iconOpt is not None else [{}])
+            names = getIconName(name)
+            if name == 'fontColor':
+                iconOpt[1]['color'] = colorName
+            elif name == 'backColor':
+                iconOpt[1]['color'] = colorName
+            elif name in ('bold', 'italic', 'underl', 'strike', 'super', 'sub'):
+                if status:
+                    iconOpt = getIconOpt('pressed') + (iconOpt if iconOpt is not None else [{'color': '#393D49'}])
+                    names = getIconName('pressed') + names
+            iconOpt = addDefaultColorToFontOptions(iconOpt)
+            return qta.icon(*names, options=iconOpt)
+
+        self.fontColor.setIcon(getFormatbarIcon('fontColor', color.name(), True))
+        self.backColor.setIcon(getFormatbarIcon('backColor', backgroundColor.name(), True))
+
+        self.boldAction.setIcon(getFormatbarIcon('bold', ' ', bold))
+        self.italicAction.setIcon(getFormatbarIcon('italic', ' ', italic))
+        self.underlAction.setIcon(getFormatbarIcon('underl', ' ', underLine))
+        self.strikeAction.setIcon(getFormatbarIcon('strike', ' ', strike))
+        self.superAction.setIcon(getFormatbarIcon('super', ' ', alignSuper))
+        self.subAction.setIcon(getFormatbarIcon('sub', ' ', alignSub))
+
+        try:
+            self.fontSize.blockSignals(True)
+            self.fontBox.blockSignals(True)
+            self.fontSize.setValue(size)
+            self.fontBox.setCurrentFont(font)
+        finally:
+            self.fontSize.blockSignals(False)
+            self.fontBox.blockSignals(False)
+
+    @checkLock
     def wordCount(self):
-
         wc = wordcount.WordCount(self)
-
         wc.getText()
-
         wc.show()
 
+    @checkLock
     def insertImage(self):
 
         # Get image file name
@@ -911,25 +1259,26 @@ class Main(QMainWindow):
             else:
                 self.text.dropImage(image)
 
+    @checkLock
     def fontColorChanged(self):
-
-        # Get a color from the text dialog
         color = QColorDialog.getColor()
-
-        # Set it as the new text color
         self.text.setTextColor(color)
+        self.updateFormatBarIcon()
 
-    def backColor(self):
+    @checkLock
+    def changeBackgroundColor(self):
 
         color = QColorDialog.getColor()
-
         self.text.setTextBackgroundColor(color)
+        self.updateFormatBarIcon()
 
+    @checkLock
     def insertTable(self):
         dialog = table.TableEditor(self.text)
         dialog.exec_()
         dialog.destroy()
 
+    @checkLock
     def modifyTableProperty(self):
         dialog = table.TableEditor(self.text)
         dialog.setCurrentFormat(self.text.textCursor().currentTable().format())
@@ -937,14 +1286,16 @@ class Main(QMainWindow):
         dialog.exec_()
         dialog.destroy()
 
+    @checkLock
     def modifyColumnPropery(self):
         dialog = table.ColumnEditor(self.text)
         dialog.exec_()
         dialog.destroy()
 
     def modifyCellBackground(self):
-        ext.table.setCellsBackgroundColor(self.text)
+        table.setCellsBackgroundColor(self.text)
 
+    @checkLock
     def copySourceCode(self):
         #self.text.insertHtml('<h1>标题一</h1>')
         # self.text.textCursor().beginEditBlock()
@@ -961,9 +1312,10 @@ class Main(QMainWindow):
         #print(self.text.textCursor().selection().toHtml())
 
         #self.text.insertHtml('<h3>标题三</h3>')
-        text = self.text.toHtml()
-        print(text)
 
+        print(self.text.toHtml())
+
+    @checkLock
     def openEmoji(self):
 
         if self.emoji_browser is None:
@@ -975,11 +1327,13 @@ class Main(QMainWindow):
 
         self.emoji_browser.show()
 
+    @checkLock
     def insertQuote(self):
         dialog = quote.Quote(self.text)
         dialog.exec_()
         dialog.destroy()
 
+    @checkLock
     def modifyQuotePropery(self):
         dialog = quote.Quote(self.text)
         dialog.setCurrentFormat(self.text.textCursor().currentFrame().format().toFrameFormat())
@@ -987,33 +1341,35 @@ class Main(QMainWindow):
         dialog.exec_()
         dialog.destroy()
 
+    @checkLock
     def font(self, font:QFont):
         currentFont = self.text.currentFont()
         currentFont.setFamily(font.family())
         self.text.setCurrentFont(currentFont)
+        self.updateFormatBarIcon()
 
+    @checkLock
     def bold(self):
-
         if self.text.fontWeight() == QFont.Bold:
-
             self.text.setFontWeight(QFont.Normal)
-
         else:
-
             self.text.setFontWeight(QFont.Bold)
 
+        self.updateFormatBarIcon()
+
+    @checkLock
     def italic(self):
-
         state = self.text.fontItalic()
-
         self.text.setFontItalic(not state)
+        self.updateFormatBarIcon()
 
+    @checkLock
     def underline(self):
-
         state = self.text.fontUnderline()
-
         self.text.setFontUnderline(not state)
+        self.updateFormatBarIcon()
 
+    @checkLock
     def strike(self):
 
         # Grab the text's format
@@ -1024,7 +1380,9 @@ class Main(QMainWindow):
 
         # And set the next char format
         self.text.setCurrentCharFormat(fmt)
+        self.updateFormatBarIcon()
 
+    @checkLock
     def superScript(self):
 
         # Grab the current format
@@ -1044,7 +1402,9 @@ class Main(QMainWindow):
 
         # Set the new format
         self.text.setCurrentCharFormat(fmt)
+        self.updateFormatBarIcon()
 
+    @checkLock
     def subScript(self):
 
         # Grab the current format
@@ -1064,19 +1424,25 @@ class Main(QMainWindow):
 
         # Set the new format
         self.text.setCurrentCharFormat(fmt)
+        self.updateFormatBarIcon()
 
+    @checkLock
     def alignLeft(self):
         self.text.setAlignment(Qt.AlignLeft)
 
+    @checkLock
     def alignRight(self):
         self.text.setAlignment(Qt.AlignRight)
 
+    @checkLock
     def alignCenter(self):
         self.text.setAlignment(Qt.AlignCenter)
 
+    @checkLock
     def alignJustify(self):
         self.text.setAlignment(Qt.AlignJustify)
 
+    @checkLock
     def indent(self):
 
         # Grab the cursor
@@ -1112,6 +1478,7 @@ class Main(QMainWindow):
 
             cursor.insertText("\t")
 
+    @checkLock
     def handleDedent(self,cursor):
 
         cursor.movePosition(QTextCursor.StartOfLine)
@@ -1134,6 +1501,7 @@ class Main(QMainWindow):
 
                 cursor.deleteChar()
 
+    @checkLock
     def dedent(self):
 
         cursor = self.text.textCursor()
@@ -1162,7 +1530,7 @@ class Main(QMainWindow):
         else:
             self.handleDedent(cursor)
 
-
+    @checkLock
     def bulletList(self):
 
         cursor = self.text.textCursor()
@@ -1170,6 +1538,7 @@ class Main(QMainWindow):
         # Insert bulleted list
         cursor.insertList(QTextListFormat.ListDisc)
 
+    @checkLock
     def numberList(self):
 
         cursor = self.text.textCursor()
@@ -1177,6 +1546,7 @@ class Main(QMainWindow):
         # Insert list with numbers
         cursor.insertList(QTextListFormat.ListDecimal)
 
+    @checkLock
     def head(self, headButton:QToolButton, action:QAction):
         level = action.property('level')
         selection = self.text.getSelection()
@@ -1189,6 +1559,7 @@ class Main(QMainWindow):
         self.text.setSelection(selection)
         headButton.setDefaultAction(action)
 
+    @checkLock
     def highlight(self, toolButton:QToolButton, action: QAction):
         toolButton.setDefaultAction(action)
         if self.text.textCursor().hasSelection():
@@ -1199,6 +1570,7 @@ class Main(QMainWindow):
             self.text.setTextColor(QColor(120, 35, 12))
             self.text.setFontWeight(700)
 
+    @checkLock
     def highlightUnderline(self, toolButton:QToolButton, action: QAction):
         toolButton.setDefaultAction(action)
         if self.text.textCursor().hasSelection():
@@ -1211,6 +1583,7 @@ class Main(QMainWindow):
             self.text.setTextBackgroundColor(QColor(255, 255, 153))
             self.text.setFontWeight(700)
 
+    @checkLock
     def clearFormat(self):
 
         fmt = self.text.currentCharFormat()
@@ -1226,9 +1599,15 @@ class Main(QMainWindow):
 
 
 def main():
-    key_checker['timeout'] = 300
+    key_checker['timeout'] = 600
     start_check_key_thread()
     add_key_invalidate_callback(lambda key: print('key超时'))
+
+    from keymanager import utils
+    utils.external_module_name = 'writer.settings'
+    utils.get_icon_name_func_name = 'getIconName'
+    utils.get_icon_func_name = 'getIcon'
+    utils.get_icon_opt_func_name = 'getIconOpt'
 
     app = QApplication(sys.argv)
 
