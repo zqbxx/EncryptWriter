@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import shutil
@@ -6,6 +7,7 @@ from typing import Any
 
 import qtawesome as qta
 from PySide6.QtGui import QIcon
+from deepdiff import DeepDiff
 
 SETTING_FILE = './config/settings.json'
 SETTING_FILE_BACKUP = './config/settings.json.backup'
@@ -16,7 +18,7 @@ class Settings:
     def __init__(self) -> None:
         self.d: [dict[str, str]] = dict()
         self.read()
-        self.original = self.d.copy()
+        self.original = copy.deepcopy(self.d)
 
     def read(self):
         try:
@@ -34,6 +36,8 @@ class Settings:
             self.d['autoLockDoc'] = True
         if 'resetTimeoutOnSelect' not in self.d:
             self.d['resetTimeoutOnSelect'] = True
+        if 'webcam' not in self.d:
+            self.d['webcam'] = {}
 
     def _makeDir(self) -> None:
         folder = Path(SETTING_FILE).parent
@@ -41,7 +45,8 @@ class Settings:
             folder.mkdir(parents=True)
 
     def write(self) -> None:
-        if self.d == self.original:
+        diff = DeepDiff(self.d, self.original, ignore_order=True)
+        if len(diff) == 0:
             return
         self._makeDir()
         with open(SETTING_FILE_BACKUP, "w") as f:
@@ -73,13 +78,28 @@ class Settings:
     def resetTimeoutOnSelect(self, reset: bool):
         self.d['resetTimeoutOnSelect'] = 'True' if reset else 'False'
 
+    @property
+    def webcams(self):
+        return copy.deepcopy(self.d['webcam'])
 
-icon_names = {
+    def isWebcamExists(self, name:str):
+        return name in self.d['webcam']
+
+    def addWebcam(self, name: str, webcam: dict):
+        self.d['webcam'][name] = webcam
+
+    def removeWebcam(self, name:str):
+        if self.isWebcamExists(name):
+            del self.d['webcam'][name]
+
+
+IconNames = {
 
     # 工具栏
     'new': 'ei.file-new',
     'open': 'ei.folder-open',
     'save': 'fa.save',
+    'saveas': 'msc.save-as',
     'close': 'fa.close',
     'print': 'ei.print',
     'preview': 'msc.open-preview',
@@ -97,6 +117,7 @@ icon_names = {
     'wordCount': ['msc.symbol-string', 'fa5s.hand-point-up'],
     'table': 'ph.table',
     'image': 'fa.image',
+    'camera': 'ei.camera',
     'bullet': 'mdi.format-list-bulleted',
     'numbered': 'fa.list-ol',
     'code': 'fa.code',
@@ -154,9 +175,14 @@ icon_names = {
     'tabMergeCells': 'mdi.set-merge',
     'tabSplitCells': 'mdi.set-split',
 
+    'webcam': ('mdi.webcam'),
+    'webcamAdd': ('mdi.webcam', 'ri.add-circle-fill'),
+    'webcamRemove': ('mdi.webcam', 'fa.remove'),
+    'camRefresh': ('ei.camera', 'fa.refresh')
+
 }
 
-icon_opts = {
+IconOpts = {
 
     'unlock': [{'scale_factor': 0.85, 'color': '#009688'}],
     'lock':[{'scale_factor': 0.85, 'color': '#660033'}],
@@ -186,9 +212,22 @@ icon_opts = {
     'create_key':[{'color': ''}, {}, {}],
     'manage_key':[{'color': ''},],
 
+    'webcamAdd':[
+        {'offset': (-0.1, -0.15), 'scale_factor':0.9, },
+        {'scale_factor': 0.68, 'offset': (0.25, 0.2), 'color': '#59a869'}
+    ],
+    'webcamRemove':[
+        {'offset': (-0.1, -0.15), 'scale_factor':0.9, },
+        {'scale_factor': 0.68, 'offset': (0.25, 0.2), 'color': '#db5860'}
+    ],
+    'camRefresh':[
+        {'offset': (-0.1, -0.15), 'scale_factor':0.9, },
+        {'scale_factor': 0.68, 'offset': (0.25, 0.2), 'color': '#1E9FFF'}
+    ]
+
 }
 
-document_properties = {
+DocumentProperties = {
     'author': {
         'display': '作者',
         'value': '',
@@ -216,6 +255,16 @@ document_properties = {
     },
 }
 
+SymbolEmojis = {
+    '圆形':['🔴', '🔵', '🟠', '🟡', '🟢', '🟣', '🟤', '⚫', '⚪', '🔘','⭕'],
+    '正方形':['🟥','🟦','🟧','🟨','🟩','🟪','🟫','🏿','🏾','🏽','🏼','🏻'],
+    '选项1':['☑', '✔','✖','◻','◼'],
+    '选项2':['✅','⬜','❌','❎','🟩','🔲','🔳'],
+    '符号1':['🔶','🔷','🔸','🔹'],
+    '符号2':['◽','◾','▪','▫'],
+    '其他':['⭐']
+}
+
 
 def getIcon(name: str) -> QIcon:
     iconNames = getIconName(name)
@@ -236,17 +285,25 @@ def addDefaultColorToFontOptions(iconOpt):
 
 
 def getIconName(name: str) -> list[dict[str, str]]:
-    if not name in icon_names:
+    if not name in IconNames:
         return None
-    iconNames = icon_names[name]
+    iconNames = IconNames[name]
     if type(iconNames) is str:
-        return [icon_names[name],]
+        return [IconNames[name], ]
     elif type(iconNames) is tuple or type(iconNames) is list:
         return iconNames
     return None
 
 
 def getIconOpt(name: str) -> tuple[dict[str, Any]]:
-    if name in icon_opts:
-        return icon_opts.get(name)
+    if name in IconOpts:
+        return IconOpts.get(name)
+    return None
+
+
+def getSymbolEmojiType(char: str):
+    for type, symbols in SymbolEmojis.items():
+        for symbol in symbols:
+            if symbol == char:
+                return  type
     return None

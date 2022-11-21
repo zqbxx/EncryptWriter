@@ -12,10 +12,11 @@ from .widgets import ColorButton, checkLock, checkLockFunc
 
 
 class TableEditor(QDialog):
+
     def __init__(self, parent=None):
         QDialog.__init__(self, parent)
 
-        self.parentWidget: QTextEdit = parent
+        self._parentWidget: QTextEdit = parent
         self.currentTableFormat: QTextTableFormat = None
 
         self.initUI()
@@ -142,7 +143,7 @@ class TableEditor(QDialog):
 
         isInsert = True if self.currentTableFormat is None else False
 
-        cursor: QTextCursor = self.parentWidget.textCursor()
+        cursor: QTextCursor = self._parentWidget.textCursor()
 
         # Get the configurations
         rows = self.rows.value()
@@ -186,15 +187,15 @@ class TableEditor(QDialog):
             if self.bottomMargin.isEnabled():
                 fmt.setBottomMargin(float(self.bottomMargin.text()))
 
-            self.parentWidget.textCursor().beginEditBlock()
+            self._parentWidget.textCursor().beginEditBlock()
             if isInsert:
                 cursor.insertTable(rows, cols, fmt)
             else:
                 cursor.currentTable().setFormat(fmt)
-            self.parentWidget.textCursor().endEditBlock()
+            self._parentWidget.textCursor().endEditBlock()
 
             try:
-                self.parentWidget.textCursor().joinPreviousEditBlock()
+                self._parentWidget.textCursor().joinPreviousEditBlock()
                 if isInsert:
                     width = int(100 / cols)
                     columnWidthConstraints = []
@@ -214,7 +215,7 @@ class TableEditor(QDialog):
                             cellFormat.setBackground(self.bgColorBtn.color())
                             cell.setFormat(cellFormat)
             finally:
-                self.parentWidget.textCursor().endEditBlock()
+                self._parentWidget.textCursor().endEditBlock()
 
             self.close()
 
@@ -225,13 +226,13 @@ class ColumnEditor(QDialog):
 
     def __init__(self, parent=None):
         QDialog.__init__(self, parent)
-        self.parentWidget: QTextEdit = parent
+        self._parentWidget: QTextEdit = parent
         self.initUI()
 
     def initUI(self):
         self.setWindowIcon(getIcon('tableColumn'))
 
-        t = self.parentWidget.textCursor().currentTable()
+        t = self._parentWidget.textCursor().currentTable()
         columns: List[QTextLength] = t.format().columnWidthConstraints()
         typeNames = {
             QTextLength.Type.PercentageLength: ['%', 'tabColPerWidth'],
@@ -289,7 +290,7 @@ class ColumnEditor(QDialog):
 
     @checkLock
     def save(self):
-        t = self.parentWidget.textCursor().currentTable()
+        t = self._parentWidget.textCursor().currentTable()
 
         format = t.format()
         if format.isTableFormat():
@@ -330,7 +331,7 @@ def setCellsBackgroundColor(text: TextEdit):
     dlg = QColorDialog(text)
     dlg.setCurrentColor(latestCell.format().background().color())
     if dlg.exec():
-        if not checkLockFunc(text.parentWidget):
+        if not checkLockFunc(text._parentWidget):
             return
         newColor = dlg.currentColor()
         text.textCursor().beginEditBlock()

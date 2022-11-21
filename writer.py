@@ -6,30 +6,27 @@ from functools import partial, lru_cache
 import qtawesome as qta
 
 import keymanager.encryptor
-from keymanager.menus import activate_key, add_key, add_keymanager_menu, reload_key
+from keymanager.key import decrypt_data, encrypt_data, Key, add_key_invalidate_callback, set_key_timeout, \
+    add_current_keystatus_callback, KEY_CACHE as key_cache, start_check_key_thread, KEY_CHECKER as key_checker
+from keymanager.menus import add_key, add_keymanager_menu, reload_key
 
-from writerlib import emo, dt, textedit, table, image, wordcount, quote, systemsetting
-from writerlib.find import Find
-from writerlib.property import PropertyEditor
-from writerlib.settings import getIcon, Settings, getIconOpt, getIconName, addDefaultColorToFontOptions
+from writerlib import textedit
+from writerlib.settings import Settings, getIcon, getSymbolEmojiType, SymbolEmojis, getIconOpt, getIconName, \
+    addDefaultColorToFontOptions
 from writerlib.textedit import Selection
 
 os.environ['QT_API'] = 'PySide6'
-from keymanager.dialogs import KeyMgrDialog
-from keymanager.encryptor import encrypt_data, decrypt_data
-from keymanager.key import KEY_CHECKER as key_checker, start_check_key_thread, KEY_CACHE as key_cache, \
-    add_key_invalidate_callback, add_current_keystatus_callback, Key, set_key_timeout
 
 import sys
 from pathlib import Path
 
 from PySide6 import QtPrintSupport, QtGui
-from PySide6.QtCore import QPoint, Signal, QMetaType
+from PySide6.QtCore import QPoint, Signal
 from PySide6.QtGui import QAction, QIcon, QContextMenuEvent, Qt, QImage, QTextCharFormat, QFont, QTextCursor, \
-    QTextListFormat, QColor
+    QTextListFormat, QColor, QTextFragment
 from PySide6.QtWidgets import QMainWindow, QFontComboBox, QSpinBox, QMessageBox, QMenu, QFileDialog, QDialog, \
     QColorDialog, QApplication, QPushButton, QToolButton, QStackedLayout, QWidget, \
-    QLabel, QSizePolicy, QProgressBar, QLCDNumber
+    QLabel, QSizePolicy, QLCDNumber
 
 
 def checkLock(callback):
@@ -41,6 +38,24 @@ def checkLock(callback):
         r = callback(*args, **kwargs)
         return r
     return f
+
+
+class LockData:
+
+    def __init__(self):
+        self.unlock()
+
+    def unlock(self):
+        self.encrypt_text = ''
+        self.selection = Selection()
+        self.cursorPosition = -1
+        self.scrollBarPos = -1
+
+    def lock(self, encrypt_text: str, selection: Selection, cursorPosition: int, scrollBarPos: int):
+        self.encrypt_text = encrypt_text
+        self.selection = selection
+        self.cursorPosition = cursorPosition
+        self.scrollBarPos = scrollBarPos
 
 
 class Main(QMainWindow):
@@ -56,9 +71,13 @@ class Main(QMainWindow):
         self.defaultKeyMark = bytes()
         self.encryptedMark = bytes()
 
-        self.encrypt_lock_text = ""  # 锁定时记录的加密文件内容
+        self.encrypt_text = ""  # 锁定时记录的加密文件内容
 
-        self.emoji_browser: emo.IconBrowser = None
+        self.lockData = LockData()
+
+        self.emoji_browser = None
+        self.find = None
+        self.dt = None
 
         self.systemSetting = Settings()
         self.initUI()
@@ -84,6 +103,11 @@ class Main(QMainWindow):
         self.saveAction.setStatusTip("保存文档")
         self.saveAction.setShortcut("Ctrl+S")
         self.saveAction.triggered.connect(self.save)
+
+        self.saveAsAction = QAction(getIcon('saveas'), '另存为', self)
+        self.saveAsAction.setStatusTip('文档另存为')
+        self.saveAsAction.setShortcut("Ctrl+Shift+S")
+        self.saveAsAction.triggered.connect(partial(self.save, saveas=True))
 
         self.closeAction = QAction(getIcon('close'), '关闭', self)
         self.closeAction.setStatusTip("关闭文档")
@@ -120,7 +144,7 @@ class Main(QMainWindow):
         self.findAction = QAction(getIcon('find'), "查找和替换", self)
         self.findAction.setStatusTip("在文档中查找和替换单词、词组")
         self.findAction.setShortcut("Ctrl+F")
-        self.findAction.triggered.connect(Find(self).show)
+        self.findAction.triggered.connect(self.findAndReplace)
 
         self.cutAction = QAction(getIcon('cut'), "剪切", self)
         self.cutAction.setStatusTip("将文档内容复制到剪贴板，然后在文档中删除")
@@ -153,7 +177,7 @@ class Main(QMainWindow):
         dateTimeAction = QAction(getIcon('dateTime'), "插入时间和日期", self)
         dateTimeAction.setStatusTip("插入时间和日期")
         dateTimeAction.setShortcut("Ctrl+D")
-        dateTimeAction.triggered.connect(dt.DateTime(self).show)
+        dateTimeAction.triggered.connect(self.inserDatetime)
 
         wordCountAction = QAction(getIcon('wordCount'), "文字统计", self)
         wordCountAction.setStatusTip("查看文字和符号数量")
@@ -169,6 +193,18 @@ class Main(QMainWindow):
         imageAction.setStatusTip("插入图片")
         imageAction.setShortcut("Ctrl+Shift+I")
         imageAction.triggered.connect(self.insertImage)
+
+        cameraAction = QAction(getIcon('camera'), "从摄像头拍照", self)
+        cameraAction.setStatusTip("从摄像头拍照，支持本地摄像头和网络摄像头")
+        cameraAction.triggered.connect(self.insertCameraImage)
+
+        imageButton = QToolButton(self)
+        imageMenu = QMenu(imageButton)
+        imageMenu.addAction(imageAction)
+        imageMenu.addAction(cameraAction)
+        imageButton.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        imageButton.setDefaultAction(imageAction)
+        imageButton.setMenu(imageMenu)
 
         bulletAction = QAction(getIcon('bullet'), "插入符号列表", self)
         bulletAction.setStatusTip("插入符号列表")
@@ -194,6 +230,7 @@ class Main(QMainWindow):
         self.toolbar.addAction(self.newAction)
         self.toolbar.addAction(self.openAction)
         self.toolbar.addAction(self.saveAction)
+        self.toolbar.addAction(self.saveAsAction)
         self.toolbar.addAction(self.closeAction)
         self.toolbar.addAction(self.lockAction)
 
@@ -218,7 +255,8 @@ class Main(QMainWindow):
 
         self.toolbar.addAction(dateTimeAction)
         self.toolbar.addAction(tableAction)
-        self.toolbar.addAction(imageAction)
+        #self.toolbar.addAction(imageAction)
+        self.toolbar.addWidget(imageButton)
         self.toolbar.addAction(bulletAction)
         self.toolbar.addAction(numberedAction)
         self.toolbar.addAction(emojiAction)
@@ -400,6 +438,7 @@ class Main(QMainWindow):
         file.addAction(self.newAction)
         file.addAction(self.openAction)
         file.addAction(self.saveAction)
+        file.addAction(self.saveAsAction)
         file.addAction(self.printAction)
         file.addAction(self.previewAction)
         file.addAction(self.sysSettingAction)
@@ -429,13 +468,13 @@ class Main(QMainWindow):
 
         self.text = textedit.TextEdit(self)
         self.text.document().setDocumentMargin(20)
-        self.text.document().contentsChanged.connect(lambda: key_cache.get_cur_key().key if key_cache.get_cur_key() is not None and not key_cache.get_cur_key().timeout else None)
 
-        # Set the tab stop width to around 33 pixels which is
-        # more or less 8 spaces
+        self.text.document().contentsChanged.connect(self.resetTimeout)
+        self.text.verticalScrollBar().valueChanged.connect(
+            lambda: self.resetTimeout() if self.systemSetting.resetTimeoutOnSelect else None
+        )
+
         self.text.setTabStopDistance(33)
-
-        self.tablePropertyEditor = table.TableEditor(self.text)
 
         self.initToolbar()
         self.initFormatbar()
@@ -589,6 +628,36 @@ class Main(QMainWindow):
             self.text.setTextCursor(mouseCursor)
             textCursor = self.text.textCursor()
 
+        selectedText = self.text.textCursor().selectedText()
+        symbolType = getSymbolEmojiType(selectedText) if len(selectedText) == 1 else None
+
+        # 表情符号
+        if len(selectedText) == 1 and symbolType is not None:
+
+            def insertText(text):
+                self.text.textCursor().insertText(text)
+
+            menu = self.text.createStandardContextMenu()
+            menu.addSeparator()
+            symbolMenu = menu.addMenu(getIcon('emoji'), '替换符号')
+            symbols = SymbolEmojis[symbolType]
+            for symbol in symbols:
+                if selectedText != symbol:
+                    act = QAction(symbol, self)
+                    act.triggered.connect(partial(insertText, text=symbol))
+                    symbolMenu.addAction(act)
+            symbolMenu.addSeparator()
+            for type, symbols in SymbolEmojis.items():
+                if type == symbolType:
+                    continue
+                subSymbolMenu = symbolMenu.addMenu(type)
+                for symbol in symbols:
+                    act = QAction(symbol, self)
+                    act.triggered.connect(partial(insertText, text=symbol))
+                    subSymbolMenu.addAction(act)
+            self.showMenu(menu, pos)
+            return
+
         # 调整光标位置，否则无法判断图片
         if textCursor.charFormat().isImageFormat(): # 当前光标是图片格式的情况，一般来说此时光标在图片后
             # 当前选中一个字符（图片），调整鼠标位置到选中开始
@@ -616,10 +685,15 @@ class Main(QMainWindow):
 
         charFormat = self.text.currentCharFormat()
 
+        # 图片右键菜单
         if charFormat.isImageFormat() and abs(textCursor.selectionStart() - textCursor.selectionEnd()) <= 1:
+
+            from writerlib import image
+
             cursor = self.text.cursorForPosition(pos)
             menu = QMenu(self)
             image_format = charFormat.toImageFormat()
+
             def showImageSetting():
                 imageSetting = image.Image(image_format, self)
                 imageSetting.okClicked.connect(lambda f: self.text.setCurrentCharFormat(f))
@@ -650,6 +724,7 @@ class Main(QMainWindow):
         # Grab the cursor
         cursor = self.text.textCursor()
 
+        # 引用右键菜单
         currentFrame = cursor.currentFrame()
         if currentFrame != self.text.document().rootFrame() and not cursor.currentTable():
             menu = self.text.createStandardContextMenu()
@@ -664,9 +739,7 @@ class Main(QMainWindow):
         # Grab the current table, if there is one
         table = cursor.currentTable()
 
-        # Above will return 0 if there is no current table, in which case
-        # we call the normal context menu. If there is a table, we create
-        # our own context menu specific to table interaction
+        # 表格右键菜单
         if table:
 
             menu = QMenu(self)
@@ -939,9 +1012,10 @@ class Main(QMainWindow):
             self.text.textChanged.connect(self.changed)
 
     @checkLock
-    def save(self):
+    def save(self, saveas=False):
 
         current_key = key_cache.get_cur_key()
+        oldfilename = self.filename
 
         if self.text.isEncryptDocument:
 
@@ -965,7 +1039,7 @@ class Main(QMainWindow):
                 if result == QMessageBox.StandardButton.No:
                     return False
 
-        if not self.filename:
+        if not self.filename or saveas:
           self.filename = QFileDialog.getSaveFileName(self, 'Save File')[0]
 
         if self.filename:
@@ -988,6 +1062,10 @@ class Main(QMainWindow):
             self.changesSaved = True
             self.updateWindowsTitle()
             return True
+
+        if saveas:
+            self.filename = oldfilename
+
         return False
 
     @checkLock
@@ -1084,7 +1162,9 @@ class Main(QMainWindow):
                 continue
             action.setEnabled(False)
         text = self.text.toHtml()
-        self.encrypt_text = encrypt_data(key.key, text.encode('utf-8'))
+        encrypt_text = encrypt_data(key.key, text.encode('utf-8'))
+        self.lockData.lock(encrypt_text, self.text.getSelection(), self.text.textCursor().position(), self.text.verticalScrollBar().value())
+        self.text.document().clearUndoRedoStacks()
         self.text.textCursor().beginEditBlock()
         self.text.textChanged.disconnect(self.changed)
         self.text.clear()
@@ -1092,7 +1172,7 @@ class Main(QMainWindow):
         self.text.textCursor().endEditBlock()
 
     def doUnLock(self, key: Key):
-        text = decrypt_data(key.key, self.encrypt_text).decode('utf-8')
+        text = decrypt_data(key.key, self.lockData.encrypt_text).decode('utf-8')
         self.text.textCursor().joinPreviousEditBlock()
         self.text.textChanged.disconnect(self.changed)
         self.text.setHtml(text)
@@ -1111,6 +1191,14 @@ class Main(QMainWindow):
         for index, action in enumerate(self.menuBar().actions()):
             action.setEnabled(True)
 
+        if self.lockData.selection.start == self.lockData.cursorPosition:
+            self.text.setSelection(Selection(self.lockData.selection.end, self.lockData.selection.start))
+        else:
+            self.text.setSelection(self.lockData.selection)
+        self.text.verticalScrollBar().setValue(self.lockData.scrollBarPos)
+
+        self.lockData.unlock()
+
     @checkLock
     def preview(self):
 
@@ -1124,12 +1212,14 @@ class Main(QMainWindow):
 
     @checkLock
     def sysSetting(self):
+        from writerlib import systemsetting
         editor = systemsetting.SysSettingEditor(self)
         editor.exec()
         editor.destroy()
 
     @checkLock
     def editProperty(self):
+        from writerlib.property import PropertyEditor
         prop = PropertyEditor(self.text)
         prop.propertySaved.connect(lambda : self.changed())
         prop.exec()
@@ -1137,9 +1227,17 @@ class Main(QMainWindow):
 
     @checkLock
     def keyManager(self):
+        from keymanager.dialogs import KeyMgrDialog
         kmd = KeyMgrDialog()
         kmd.exec()
         kmd.destroy()
+
+    def findAndReplace(self):
+        from writerlib.find import Find
+        if self.find is not None:
+            self.find.destroy()
+        self.find = Find(self)
+        self.find.show()
 
     @checkLock
     def printHandler(self):
@@ -1150,12 +1248,15 @@ class Main(QMainWindow):
         if dialog.exec_() == QDialog.Accepted:
             self.text.document().print_(dialog.printer())
 
+    def resetTimeout(self):
+        currentKey = key_cache.get_cur_key()
+        if currentKey is not None and not currentKey.timeout:
+            currentKey.touch()
+
     def cursorPosition(self):
 
         if self.systemSetting.resetTimeoutOnSelect:
-            currentKey = key_cache.get_cur_key()
-            if currentKey is not None and not currentKey.timeout:
-                currentKey.touch()
+            self.resetTimeout()
 
         self.updateFormatBarIcon()
 
@@ -1227,7 +1328,16 @@ class Main(QMainWindow):
             self.fontBox.blockSignals(False)
 
     @checkLock
+    def inserDatetime(self):
+        from writerlib import dt
+        if self.dt is not None:
+            self.dt.destory()
+        self.dt = dt.DateTime(self)
+        self.dt.show()
+
+    @checkLock
     def wordCount(self):
+        from writerlib import wordcount
         wc = wordcount.WordCount(self)
         wc.getText()
         wc.show()
@@ -1259,6 +1369,12 @@ class Main(QMainWindow):
             else:
                 self.text.dropImage(image)
 
+    def insertCameraImage(self):
+        from writerlib import image
+        d = image.CameraListDialog(self.text)
+        d.exec()
+        d.destroy()
+
     @checkLock
     def fontColorChanged(self):
         color = QColorDialog.getColor()
@@ -1274,12 +1390,14 @@ class Main(QMainWindow):
 
     @checkLock
     def insertTable(self):
+        from writerlib import table
         dialog = table.TableEditor(self.text)
         dialog.exec_()
         dialog.destroy()
 
     @checkLock
     def modifyTableProperty(self):
+        from writerlib import table
         dialog = table.TableEditor(self.text)
         dialog.setCurrentFormat(self.text.textCursor().currentTable().format())
         dialog.updateValue()
@@ -1288,38 +1406,31 @@ class Main(QMainWindow):
 
     @checkLock
     def modifyColumnPropery(self):
+        from writerlib import table
         dialog = table.ColumnEditor(self.text)
         dialog.exec_()
         dialog.destroy()
 
     def modifyCellBackground(self):
+        from writerlib import table
         table.setCellsBackgroundColor(self.text)
 
     @checkLock
     def copySourceCode(self):
-        #self.text.insertHtml('<h1>标题一</h1>')
-        # self.text.textCursor().beginEditBlock()
-        # text = self.text.textCursor().selectedText()
-        # self.text.textCursor().insertHtml('<h1>' + text + '</h1>')
-        # self.text.textCursor().endEditBlock()
-        # self.text.textCursor().insertHtml('<code>var i = "1"</code>')
-        # self.text.textCursor().insertHtml('<cite>fffffffffffffffffffffffffffff</cite>')
-        # textList = self.text.textCursor().currentList()
-        # textListCnt = textList.count()
-        # for i in range(textListCnt):
-        #     block = textList.item(i)
-        #     print(block.text())
-        #print(self.text.textCursor().selection().toHtml())
+        from writerlib import image
+        d = image.CameraListDialog(self.text)
+        d.exec()
+        d.destroy()
 
-        #self.text.insertHtml('<h3>标题三</h3>')
-
-        print(self.text.toHtml())
 
     @checkLock
     def openEmoji(self):
 
+        from writerlib import emo
+
         if self.emoji_browser is None:
-            self.emoji_browser = emo.IconBrowser()
+
+            self.emoji_browser = emo.EmojiBrowser(self)
             self.emoji_browser.emojiSelected.connect(lambda char: self.text.textCursor().insertText(char))
 
         if self.emoji_browser.isVisible():
@@ -1329,12 +1440,14 @@ class Main(QMainWindow):
 
     @checkLock
     def insertQuote(self):
+        from writerlib import quote
         dialog = quote.Quote(self.text)
         dialog.exec_()
         dialog.destroy()
 
     @checkLock
     def modifyQuotePropery(self):
+        from writerlib import quote
         dialog = quote.Quote(self.text)
         dialog.setCurrentFormat(self.text.textCursor().currentFrame().format().toFrameFormat())
         dialog.updateValue()

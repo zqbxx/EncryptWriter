@@ -7,7 +7,7 @@ class WordCount(QDialog):
     def __init__(self,parent = None):
         QDialog.__init__(self, parent)
 
-        self.parent = parent
+        self._parentWidget = parent
          
         self.initUI()
  
@@ -67,7 +67,7 @@ class WordCount(QDialog):
     def getText(self):
 
         # Get the text currently in selection
-        text = self.parent.text.textCursor().selectedText()
+        text = self._parentWidget.text.textCursor().selectedText()
 
         # Split the text to get the word count
         words = str(len(text.split()))
@@ -82,7 +82,7 @@ class WordCount(QDialog):
         # For the total count, same thing as above but for the
         # total text
         
-        text = self.parent.text.toPlainText()
+        text = self._parentWidget.text.toPlainText()
 
         words = str(len(text.split()))
         symbols = str(len(text))

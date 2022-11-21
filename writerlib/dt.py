@@ -9,18 +9,22 @@ class DateTime(QDialog):
     def __init__(self,parent = None):
         QDialog.__init__(self, parent)
 
-        self.parentWidget = parent
+        self._parentWidget = parent
 
-        self.formats = ["%A, %d. %B %Y %H:%M",
+        self.formats = ["%Y-%m-%d %H:%M:%S",
+                        "%Y/%m/%d %H:%M:%S",
+                        "%Y/%m/%d",
+                        "%H:%M:%S",
+                        "%H:%M",
+                        "%x",
+                        "%X",
+                        "%A, %d. %B %Y %H:%M",
                         "%A, %d. %B %Y",
                         "%d. %B %Y %H:%M",
                         "%d.%m.%Y %H:%M",
                         "%d. %B %Y",
                         "%d %m %Y",
-                        "%d.%m.%Y",
-                        "%x",
-                        "%X",
-                        "%H:%M"]
+                        "%d.%m.%Y",]
          
         self.initUI()
  
@@ -51,7 +55,7 @@ class DateTime(QDialog):
     def insert(self):
 
         # Grab cursor
-        cursor = self.parentWidget.text.textCursor()
+        cursor = self._parentWidget.text.textCursor()
 
         datetime = strftime(self.formats[self.box.currentIndex()])
 

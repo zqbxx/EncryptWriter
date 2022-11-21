@@ -10,7 +10,7 @@ class SysSettingEditor(QDialog):
     def __init__(self, parent):
         QDialog.__init__(self, parent)
 
-        self.parent = parent
+        self._parentWidget = parent
         self.initUI()
 
     def initUI(self):
@@ -21,12 +21,12 @@ class SysSettingEditor(QDialog):
         timeoutLabel = QLabel('密钥超时时间(秒)')
         self.timeoutInput = QSpinBox(self)
         self.timeoutInput.setRange(1, 1000)
-        self.timeoutInput.setValue(self.parent.systemSetting.keyTimeout)
+        self.timeoutInput.setValue(self._parentWidget.systemSetting.keyTimeout)
 
         self.autoLockDoc = QCheckBox('密钥超时后锁定文档', self)
-        self.autoLockDoc.setChecked(self.parent.systemSetting.autoLockDoc)
-        self.resetTimeoutOnSelect = QCheckBox('选择文本、光标位置变化时重置超时时间', self)
-        self.resetTimeoutOnSelect.setChecked(self.parent.systemSetting.resetTimeoutOnSelect)
+        self.autoLockDoc.setChecked(self._parentWidget.systemSetting.autoLockDoc)
+        self.resetTimeoutOnSelect = QCheckBox('选择、光标、滚动条变化时重置超时时间', self)
+        self.resetTimeoutOnSelect.setChecked(self._parentWidget.systemSetting.resetTimeoutOnSelect)
 
         layout = QGridLayout()
         rowIndex = 0
@@ -53,11 +53,11 @@ class SysSettingEditor(QDialog):
 
     @checkLock
     def ok(self):
-        self.parent.systemSetting.keyTimeout = self.timeoutInput.value()
-        self.parent.systemSetting.autoLockDoc = self.autoLockDoc.isChecked()
-        self.parent.systemSetting.resetTimeoutOnSelect = self.resetTimeoutOnSelect.isChecked()
-        self.parent.systemSetting.write()
-        set_key_timeout(self.parent.systemSetting.keyTimeout)
+        self._parentWidget.systemSetting.keyTimeout = self.timeoutInput.value()
+        self._parentWidget.systemSetting.autoLockDoc = self.autoLockDoc.isChecked()
+        self._parentWidget.systemSetting.resetTimeoutOnSelect = self.resetTimeoutOnSelect.isChecked()
+        self._parentWidget.systemSetting.write()
+        set_key_timeout(self._parentWidget.systemSetting.keyTimeout)
         self.close()
 
     def cancel(self):

@@ -1,3 +1,8 @@
 PySide6
 qtawesome
 emoji_data_python
+deepdiff
+opencv-python
+axel
+appdirs
+PyCryptodome

@@ -1,10 +1,9 @@
 import sys
-
+import threading
 
 from PySide6 import QtWidgets, QtCore, QtGui
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QShortcut, QFont
-from emoji_data_python import emoji_data
 
 from writerlib.widgets import checkLock
 from .settings import getIcon
@@ -14,17 +13,37 @@ AUTO_SEARCH_TIMEOUT = 500
 ALL_COLLECTIONS = 'All'
 
 
-class IconBrowser(QtWidgets.QMainWindow):
-    """
-    A small browser window that allows the user to search through all icons from
-    the available version of QtAwesome.  You can also copy the name and python
-    code for the currently selected icon.
-    """
+class EmojiBrowser(QtWidgets.QMainWindow):
+
+    EmojiChar = None
+
+    @classmethod
+    def isEmojiChars(cls, char: str):
+        if cls.EmojiChar is None:
+            cls.initEmojiChar()
+        return char in cls.EmojiChar
+
+    zero_width_char = [u'\u200c', u'\u200d', u'\u200e', u'\u200f', u'\ufeff']
+
+    @classmethod
+    def initEmojiChar(cls):
+        from emoji_data_python import emoji_data
+        if cls.EmojiChar is None:
+            cls.EmojiChar = []
+            for data in emoji_data:
+                string = data.char
+                cls.EmojiChar.append(string)
 
     emojiSelected = Signal(str)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent):
+        from emoji_data_python import emoji_data
+        super().__init__(parent)
+
+        if EmojiBrowser.EmojiChar is None:
+            threading.Thread(target=EmojiBrowser.initEmojiChar).start()
+
+        self._parentWidget = parent
 
         self.setMinimumSize(800, 600)
         self.setWindowTitle('表情选择器')
@@ -49,7 +68,6 @@ class IconBrowser(QtWidgets.QMainWindow):
         self._listView = IconListView(self)
         self._listView.setFont(list_font)
         self._listView.setResizeMode(QtWidgets.QListView.ResizeMode.Adjust)
-        #self._listView.setUniformItemSizes(True)
         self._listView.setViewMode(QtWidgets.QListView.IconMode)
         self._listView.setModel(self.emoji_model)
         self._listView.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -143,6 +161,7 @@ class IconBrowser(QtWidgets.QMainWindow):
         # supported in Qt 5.12 or later.
 
     def updateEmojiData(self, group, keyword=None):
+        from emoji_data_python import emoji_data
         self.emojiNames = []
         self.emojiInfo = []
         if group != ALL_COLLECTIONS:
@@ -183,7 +202,7 @@ class IconBrowser(QtWidgets.QMainWindow):
         self._updateFilter()
 
     @checkLock
-    def _copyIconText(self):
+    def _copyIconText(self, _):
         """
         Copy the name of the currently selected icon to the clipboard.
         """
@@ -257,7 +276,7 @@ def run():
     app = QtWidgets.QApplication([])
     #qtawesome.dark(app)
 
-    browser = IconBrowser()
+    browser = EmojiBrowser()
     browser.show()
 
     sys.exit(app.exec_())

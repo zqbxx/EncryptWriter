@@ -14,7 +14,7 @@ class PropertyEditor(QDialog):
 
     def __init__(self, parent):
         QDialog.__init__(self, parent)
-        self.parentWidget = parent
+        self._parentWidget = parent
         self.initUI()
 
     def initUI(self):
@@ -24,7 +24,7 @@ class PropertyEditor(QDialog):
 
         layout = QGridLayout()
         self.inputs: List[QLineEdit] = list()
-        properties = self.parentWidget.documentProperty
+        properties = self._parentWidget.documentProperty
         for i, (k, v) in enumerate(properties.items()):
 
             label = QLabel(v['display'])
@@ -38,7 +38,7 @@ class PropertyEditor(QDialog):
             layout.addWidget(input, i, 1, 1, 3)
 
         self.encryptDocumentCheckBox = QCheckBox('保存为加密文档')
-        self.encryptDocumentCheckBox.setChecked(self.parentWidget.isEncryptDocument)
+        self.encryptDocumentCheckBox.setChecked(self._parentWidget.isEncryptDocument)
         layout.addWidget(self.encryptDocumentCheckBox, len(properties.items()), 1, 1, 2)
 
         okButton = QPushButton("确定")
@@ -57,8 +57,8 @@ class PropertyEditor(QDialog):
         for input in self.inputs:
             name = input.property('name')
             value = input.text()
-            self.parentWidget.documentProperty[name]['value'] = value
-        self.parentWidget.isEncryptDocument = self.encryptDocumentCheckBox.isChecked()
+            self._parentWidget.documentProperty[name]['value'] = value
+        self._parentWidget.isEncryptDocument = self.encryptDocumentCheckBox.isChecked()
         self.propertySaved.emit()
         self.close()
 

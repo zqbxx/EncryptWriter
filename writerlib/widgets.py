@@ -108,8 +108,8 @@ def checkLock(callback):
 
         parent = None
 
-        if 'parentWidget' in self.__dict__:
-            parent = self.parentWidget
+        if '_parentWidget' in self.__dict__:
+            parent = self._parentWidget
         elif 'parent' in self.__dict__:
             try:
                 parent = self.parent
@@ -119,7 +119,7 @@ def checkLock(callback):
             return None
 
         if isinstance(parent, TextEdit):
-            parent = parent.parentWidget
+            parent = parent._parentWidget
 
         if parent.isDocumentLocked():
             QMessageBox.warning(parent, '警告', '锁定状态无法进行操作')

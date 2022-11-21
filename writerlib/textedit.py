@@ -13,7 +13,7 @@ from io import BytesIO
 import imghdr
 
 from .doc import DocFile, DocBody, DocInfoBlock, DocHead
-from .settings import document_properties
+from .settings import DocumentProperties
 
 
 class Selection:
@@ -41,8 +41,8 @@ class TextEdit(QTextEdit):
 
     def __init__(self, parent: Optional[PySide6.QtWidgets.QWidget]) -> None:
         super().__init__(parent)
-        self.parentWidget = parent
-        self.documentProperty = copy.deepcopy(document_properties)
+        self._parentWidget = parent
+        self.documentProperty = copy.deepcopy(DocumentProperties)
         self.addCreateTime()
         self.isEncryptDocument = False
         self.setStyleSheet(self.style)
@@ -165,6 +165,54 @@ class TextEdit(QTextEdit):
                 row.append(cell)
         return cells
 
+    # def getCurrentCursorChar(self):
+    #     cursorPos = self.textCursor().position()
+    #     block = self.document().findBlock(cursorPos)
+    #     blockStart = block.position()
+    #     print('block start:', blockStart)
+    #     charIndexBeforeCursor = cursorPos - blockStart - 1
+    #     charIndexAfterCursor = charIndexBeforeCursor + 1
+    #     blockText:str = block.text()
+    #
+    #     def getChar(string: str, before, after):
+    #         pos = 0
+    #         beforeChar = None
+    #         afterChar = None
+    #         for c in string:
+    #             if c in emo.EmojiBrowser.zero_width_char:
+    #                 continue
+    #             if emo.EmojiBrowser.isEmojiChars(c):
+    #                 pos += 2
+    #             else:
+    #                 pos += 1
+    #             if pos == before:
+    #                 beforeChar = c
+    #             elif pos == after:
+    #                 afterChar = c
+    #         return beforeChar, afterChar
+    #
+    #     def _len(string:str):
+    #         strLen = 0
+    #         for c in string:
+    #             if c in emo.EmojiBrowser.zero_width_char:
+    #                 continue
+    #             if emo.EmojiBrowser.isEmojiChars(c):
+    #                 strLen += 2
+    #             else:
+    #                 strLen += 1
+    #         return strLen
+    #
+    #     print(_len(blockText))
+    #
+    #     if len(blockText) == 0:
+    #         return None, None
+    #     if charIndexBeforeCursor < 0:
+    #         return getChar(blockText, -1,charIndexBeforeCursor)
+    #     elif charIndexBeforeCursor == (_len(blockText) - 1):
+    #         return getChar(blockText, charIndexBeforeCursor, -1)
+    #     else:
+    #         return getChar(blockText, charIndexBeforeCursor, charIndexAfterCursor)
+
     def docfromBytes(self, fileData:bytes) -> (str, dict):
 
         docFile = DocFile.fromBytes(fileData)
@@ -209,6 +257,10 @@ class TextEdit(QTextEdit):
     def addCreateTime(self):
         dt = datetime.now()
         self.documentProperty['createDatetime']['value'] = dt.strftime('%Y-%m-%d %H:%M:%S.%f') + ' ' + strftime('%z %Z', gmtime())
+
+    def createMimeDataFromSelection(self) -> PySide6.QtCore.QMimeData:
+        data = super().createMimeDataFromSelection()
+        return data
 
     @staticmethod
     def documentPropertyToDict(dp: dict):

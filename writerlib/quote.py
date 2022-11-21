@@ -13,7 +13,7 @@ class Quote(QDialog):
     def __init__(self, parent = None):
         QDialog.__init__(self, parent)
 
-        self.parentWidget:QTextEdit = parent
+        self._parentWidget:QTextEdit = parent
         self.currentQuoteFormat:QTextFrameFormat = None
         self.initUI()
 
@@ -84,7 +84,7 @@ class Quote(QDialog):
 
         isInsert = True if self.currentQuoteFormat is None else False
 
-        cursor: QTextCursor = self.parentWidget.textCursor()
+        cursor: QTextCursor = self._parentWidget.textCursor()
         frameFormat = QTextFrameFormat() if isInsert else self.currentQuoteFormat
         frameFormat.setBorder(self.borderWidth.value())
         frameFormat.setBackground(self.bgColorBtn.color())
